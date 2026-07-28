@@ -29,14 +29,11 @@ learning_notes_web/
 ### 方式一：直接双击打开（最简单）
 直接双击 `index.html` 用浏览器打开即可使用。
 
-> 注意：部分浏览器在 `file://` 协议下会限制 `getUserMedia`（相机）。
-> 若要用**拍照**功能，请用方式二通过 `http://` 访问。
-
-### 方式二：本地静态服务器（推荐，相机功能可用）
+### 方式二：本地静态服务器
 在本目录下执行任一命令，然后访问 `http://localhost:8091/`：
 
 ```bash
-# Python（自带）
+# Python
 python -m http.server 8091
 
 # 或 Node
