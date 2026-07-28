@@ -340,12 +340,16 @@
   // 启动拉取（静默：失败时只记录状态，不打扰用户）
   function initPull(onDone) {
     if (!isConfigured()) { if (onDone) onDone(); return; }
-    pull().then(function () { if (onDone) onDone(); },
-      function (err) {
-        writeStatus({ lastError: errMsg(err) });
-        emitStatus();
-        if (onDone) onDone();
-      });
+    pull().then(function () {
+      // 拉取完成后补推一次：把本地可能尚未上传的学习目标/路线图进度推上去，
+      // 避免「只拉不推」导致旧设备上的目标永远留在本地、不上云。
+      schedulePush();
+      if (onDone) onDone();
+    }, function (err) {
+      writeStatus({ lastError: errMsg(err) });
+      emitStatus();
+      if (onDone) onDone();
+    });
   }
 
   // 测试连接（读取仓库元数据）
