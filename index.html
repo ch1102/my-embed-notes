@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#6750A4" />
+  <title>学习笔记</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <!-- 左侧固定侧边栏 -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar__brand">
+        <span class="sidebar__logo">📒</span>
+        <span class="sidebar__name">学习笔记</span>
+      </div>
+      <nav class="sidebar-nav" id="sidebarNav">
+        <button class="nav-item active" data-nav="home" title="笔记（首页）">
+          <svg viewBox="0 0 24 24"><path d="M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2Zm0 16H5V5h14v14ZM7 12h10v2H7v-2Zm0-4h10v2H7V8Z"/></svg>
+          <span>笔记</span>
+        </button>
+        <button class="nav-item" data-nav="tags" title="标签">
+          <svg viewBox="0 0 24 24"><path d="M21.41 11.58 12.41 2.58A2 2 0 0 0 11 2H4a2 2 0 0 0-2 2v7a2 2 0 0 0 .58 1.41l9 9a2 2 0 0 0 2.83 0l7-7a2 2 0 0 0 0-2.83ZM6.5 8A1.5 1.5 0 1 1 8 6.5 1.5 1.5 0 0 1 6.5 8Z"/></svg>
+          <span>标签</span>
+        </button>
+        <button class="nav-item" data-nav="stats" title="统计">
+          <svg viewBox="0 0 24 24"><path d="M5 9.2h3V19H5V9.2Zm5.5-6h3V19h-3v-15.8ZM16 13h3v6h-3v-6Z"/></svg>
+          <span>统计</span>
+        </button>
+        <button class="nav-item" data-nav="tools" title="定时器 / 波特率计算器">
+          <svg viewBox="0 0 24 24"><path d="M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2ZM7 7h10v2H7V7Zm0 4h2v2H7v-2Zm4 0h2v2h-2v-2Zm4 0h2v2h-2v-2Zm-8 4h2v2H7v-2Zm4 0h2v2h-2v-2Zm4 0h2v2h-2v-2Z"/></svg>
+          <span>工具</span>
+        </button>
+        <button class="nav-item nav-item--action" data-nav="export" title="导出备份（Markdown + 图片 ZIP）">
+          <svg viewBox="0 0 24 24"><path d="M12 3 7 8h3v6h4V8h3l-5-5Zm-7 14v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2h-2v2H7v-2H5Z"/></svg>
+          <span>导出</span>
+        </button>
+      </nav>
+    </aside>
+    <!-- 移动端抽屉遮罩 -->
+    <div class="sidebar-backdrop" id="sidebarBackdrop" hidden></div>
+
+    <!-- 右侧主列 -->
+    <div class="main-col">
+      <!-- 顶部应用栏 -->
+      <header class="app-bar" id="appBar">
+        <button class="icon-btn app-bar__menu" id="menuBtn" aria-label="菜单">☰</button>
+    <span class="app-bar__title" id="appBarTitle">学习笔记</span>
+    <!-- 首页搜索栏 -->
+    <div class="search-bar" id="searchBar">
+      <svg class="search-bar__icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5Zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14Z"/>
+      </svg>
+      <input type="search" id="searchInput" placeholder="按标题搜索…" autocomplete="off" />
+      <button class="search-bar__clear" id="searchClear" aria-label="清除搜索" hidden>×</button>
+    </div>
+    <!-- 首页视图切换：列表 / 时间轴（仅首页显示） -->
+    <div class="view-toggle" id="viewToggle" hidden>
+      <button class="view-toggle__btn active" data-view="list" title="列表视图" aria-label="列表视图">
+        <svg viewBox="0 0 24 24"><path d="M3 5h18v2H3V5Zm0 6h18v2H3v-2Zm0 6h18v2H3v-2Z"/></svg>
+      </button>
+      <button class="view-toggle__btn" data-view="timeline" title="时间轴视图" aria-label="时间轴视图">
+        <svg viewBox="0 0 24 24"><path d="M3 4h2v16H3V4Zm4 4h14v2H7V8Zm0 5h14v2H7v-2Zm0 5h14v2H7v-2Z"/></svg>
+      </button>
+    </div>
+    <!-- 编辑页返回按钮（仅编辑页显示） -->
+    <button class="icon-btn app-bar__back" id="backBtn" aria-label="返回" hidden>
+      <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2Z"/></svg>
+    </button>
+  </header>
+
+  <!-- 主内容区 -->
+  <main class="content" id="content">
+
+    <!-- 首页 -->
+    <section class="view" id="view-home">
+      <!-- 学习路标：首页横幅（最近截止的进行中目标） -->
+      <div class="goal-banner" id="goalBanner" hidden></div>
+      <!-- 首页：随缘复习（闪卡）按钮，仅首页显示 -->
+      <button class="review-btn" id="btnReview" type="button">
+        <span class="review-btn__icon">🎲</span>
+        <span>随缘复习</span>
+      </button>
+      <!-- 引脚速查（硬件外设快速搜索，位于搜索栏下方） -->
+      <div class="pin-search" id="pinSearch">
+        <svg class="pin-search__icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 3h-2.2l-.7-1.5a1 1 0 0 0-.9-.5H8.8a1 1 0 0 0-.9.5L7.2 3H5a2 2 0 0 0-2 2v1a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2Zm-7 11a5 5 0 0 1-5-5H7a3 3 0 0 0 3 3V7h4v5a3 3 0 0 0 3-3h0a5 5 0 0 1-5 5Z"/></svg>
+        <input type="search" id="pinInput" placeholder="引脚速查：输入外设名/型号，如 OLED" autocomplete="off" />
+        <button class="pin-search__clear" id="pinClear" aria-label="清除速查" hidden>×</button>
+      </div>
+      <!-- 待解决快速筛选（仅显示未解决的 Bug 报告） -->
+      <button class="pending-filter" id="pendingBtn" type="button">🐛 待解决</button>
+      <div class="list" id="homeList"></div>
+      <div class="empty-state" id="homeEmpty" hidden>
+        <svg viewBox="0 0 24 24"><path d="M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2Zm0 16H5V5h14v14ZM7 12h10v2H7v-2Zm0-4h10v2H7V8Z"/></svg>
+        <p id="homeEmptyText">还没有笔记，点击右下角按钮新建一条吧。</p>
+      </div>
+    </section>
+
+    <!-- 标签页 -->
+    <section class="view" id="view-tags" hidden>
+      <div class="tag-cloud" id="tagCloud"></div>
+      <div class="empty-state" id="tagsEmpty" hidden>
+        <p>还没有任何标签。</p>
+      </div>
+    </section>
+
+    <!-- 统计页 -->
+    <section class="view" id="view-stats" hidden>
+      <!-- 子标签页：统计 / 路线图 / 项目墙 -->
+      <div class="subtabs" id="statsSubtabs">
+        <button class="subtab active" data-sub="main">统计</button>
+        <button class="subtab" data-sub="roadmap">路线图</button>
+        <button class="subtab" data-sub="projects">项目墙</button>
+      </div>
+
+      <!-- 统计主区 -->
+      <div id="statsMain">
+        <div class="stat-cards">
+          <div class="stat-card">
+            <div class="stat-card__value" id="statToday">0</div>
+            <div class="stat-card__label">今日新增</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card__value" id="statWeek">0</div>
+            <div class="stat-card__label">本周新增</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card__value" id="statGoals">0</div>
+            <div class="stat-card__label">已达成目标</div>
+          </div>
+        </div>
+        <div class="card chart-card">
+          <h3 class="chart-card__title">最近 7 天创建活跃度</h3>
+          <div class="chart" id="chart"></div>
+        </div>
+        <div class="card chart-card">
+          <h3 class="chart-card__title">总览</h3>
+          <div class="overview" id="overview"></div>
+        </div>
+        <!-- 随缘复习联动模块 -->
+        <div class="card review-stats">
+          <h3 class="chart-card__title">🎲 随缘复习</h3>
+          <div class="review-stats__row">
+            <div class="review-stats__item">今日已复习 <b id="revCount">0</b> 条</div>
+            <div class="review-stats__item">待复习重点 <b id="revFocusCount">0</b> 条</div>
+          </div>
+          <button class="btn btn--text review-stats__link" id="btnViewFocus">查看重点列表 →</button>
+        </div>
+      </div>
+
+      <!-- 技能雷达图 -->
+      <div class="card skill-radar" id="skillRadarCard">
+        <h3 class="chart-card__title">🛰️ 技能雷达图</h3>
+        <div class="skill-radar__canvas-wrap">
+          <canvas id="skillRadarCanvas" class="skill-radar__canvas"></canvas>
+        </div>
+        <!-- 每个维度原始（自动）得分 -->
+        <div class="skill-radar__raw" id="skillRawScores"></div>
+        <!-- 手动校准行（JS 动态生成） -->
+        <div class="skill-radar__calib" id="skillCalib"></div>
+        <!-- 推荐语 -->
+        <div class="skill-radar__tip" id="skillRecommend"></div>
+        <button class="btn btn--filled skill-radar__related" id="btnSkillRelated" type="button">📖 查看相关笔记</button>
+      </div>
+
+      <!-- 学习路标 -->
+      <div class="card learn-goals" id="learnGoalsCard">
+        <h3 class="chart-card__title">🎯 学习路标</h3>
+        <button class="btn btn--filled learn-goals__add" id="btnNewGoal" type="button">+ 新建路标</button>
+        <div class="learn-goals__section-title">进行中</div>
+        <div class="learn-goals__list" id="goalListActive"></div>
+        <div class="empty-state" id="goalEmptyActive" hidden>
+          <p>还没有进行中的学习目标。点上方「+ 新建路标」开始规划吧。</p>
+        </div>
+        <div class="learn-goals__section-title">已完成</div>
+        <div class="learn-goals__list" id="goalListDone"></div>
+        <div class="empty-state" id="goalEmptyDone" hidden>
+          <p>还没有已完成的目标。</p>
+        </div>
+      </div>
+
+      <!-- 学习路线图 -->
+      <div id="statsRoadmap" hidden>
+        <div class="card roadmap-card">
+          <div class="roadmap-progress">
+            <div class="roadmap-progress__head">
+              <span class="roadmap-progress__label" id="roadmapRouteName">STM32入门</span>
+              <span class="roadmap-progress__count" id="roadmapCount">已完成 0/0 步</span>
+            </div>
+            <div class="roadmap-progress__bar">
+              <div class="roadmap-progress__fill" id="roadmapFill"></div>
+            </div>
+            <div class="roadmap-progress__pct" id="roadmapPct">0%</div>
+          </div>
+          <div class="roadmap-routes" id="roadmapRoutes">
+            <button class="roadmap-route active" data-route="STM32入门">STM32入门</button>
+            <button class="roadmap-route" data-route="FreeRTOS">FreeRTOS</button>
+            <button class="roadmap-route" data-route="Linux驱动">Linux驱动</button>
+          </div>
+          <div class="stepper" id="roadmapStepper"></div>
+        </div>
+      </div>
+
+      <!-- 项目墙 -->
+      <div id="statsProjects" hidden>
+        <div class="proj-wall" id="projWall"></div>
+        <div class="empty-state" id="projEmpty" hidden>
+          <svg viewBox="0 0 24 24"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2Z"/></svg>
+          <p>还没有项目笔记。点击右下角 + 新建一条「项目」吧。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 工具页（计算器） -->
+    <section class="view" id="view-tools" hidden>
+      <div class="card tool-card">
+        <h3 class="tool-card__title">⏱️ 定时器溢出计算</h3>
+        <p class="tool-card__formula">溢出时间 = ((PSC + 1) × (ARR + 1)) / 时钟频率</p>
+        <div class="tool-grid">
+          <label class="field-label" for="timerClk">时钟频率 (MHz)</label>
+          <input type="number" id="timerClk" class="text-input" placeholder="如 72" step="any" min="0" />
+          <label class="field-label" for="timerPsc">预分频系数 PSC</label>
+          <input type="number" id="timerPsc" class="text-input" placeholder="如 71" step="any" min="0" />
+          <label class="field-label" for="timerArr">自动重载值 ARR</label>
+          <input type="number" id="timerArr" class="text-input" placeholder="如 999" step="any" min="0" />
+        </div>
+        <button class="btn btn--filled tool-calc" id="btnTimerCalc">计算溢出时间</button>
+        <div class="tool-result" id="timerResult" hidden></div>
+      </div>
+
+      <div class="card tool-card">
+        <h3 class="tool-card__title">📡 波特率计算</h3>
+        <p class="tool-card__formula">波特率 = 时钟频率 / (16 × USARTDIV)</p>
+        <div class="tool-grid">
+          <label class="field-label" for="baudClk">时钟频率 (MHz)</label>
+          <input type="number" id="baudClk" class="text-input" placeholder="如 72" step="any" min="0" />
+          <label class="field-label" for="baudDiv">USARTDIV 分频值</label>
+          <input type="number" id="baudDiv" class="text-input" placeholder="如 39.0625" step="any" min="0" />
+        </div>
+        <button class="btn btn--filled tool-calc" id="btnBaudCalc">计算波特率</button>
+        <div class="tool-result" id="baudResult" hidden></div>
+      </div>
+
+      <!-- CRC 校验计算器 -->
+      <div class="card tool-card crc-card">
+        <h3 class="tool-card__title">🔢 CRC 校验计算器</h3>
+        <p class="tool-card__formula">CRC = f(数据, 多项式, 初始值, 反转, 异或)</p>
+
+        <label class="field-label" for="crcPreset">预设模型</label>
+        <select id="crcPreset" class="text-input select-input">
+          <option value="CRC-16/CCITT-FALSE">CRC-16/CCITT-FALSE</option>
+          <option value="CRC-16/MODBUS">CRC-16/MODBUS</option>
+          <option value="CRC-8/MAXIM">CRC-8/MAXIM</option>
+          <option value="CRC-32/ISO-HDLC">CRC-32/ISO-HDLC (ZIP/PNG)</option>
+        </select>
+
+        <button class="crc-advanced-toggle" id="crcAdvancedToggle" type="button" aria-expanded="false">
+          高级参数（自定义）<span class="crc-advanced-toggle__caret">▸</span>
+        </button>
+        <div class="crc-advanced" id="crcAdvanced" hidden>
+          <div class="tool-grid">
+            <label class="field-label" for="crcWidth">位宽</label>
+            <select id="crcWidth" class="text-input select-input">
+              <option value="8">8</option>
+              <option value="16">16</option>
+              <option value="32">32</option>
+            </select>
+            <label class="field-label" for="crcPoly">多项式（十六进制）</label>
+            <input type="text" id="crcPoly" class="text-input" placeholder="如 1021" />
+            <label class="field-label" for="crcInit">初始值（十六进制）</label>
+            <input type="text" id="crcInit" class="text-input" placeholder="如 FFFF" />
+            <label class="field-label" for="crcXorOut">结果异或值（十六进制）</label>
+            <input type="text" id="crcXorOut" class="text-input" placeholder="如 0000" />
+            <label class="field-label" for="crcRefIn">输入数据反转</label>
+            <select id="crcRefIn" class="text-input select-input">
+              <option value="yes">是</option>
+              <option value="no">否</option>
+            </select>
+            <label class="field-label" for="crcRefOut">输出结果反转</label>
+            <select id="crcRefOut" class="text-input select-input">
+              <option value="yes">是</option>
+              <option value="no">否</option>
+            </select>
+          </div>
+        </div>
+
+        <label class="crc-mode">
+          <input type="checkbox" id="crcAsciiMode" />
+          <span>以 ASCII 字符串输入（自动转字节）</span>
+        </label>
+        <textarea id="crcHex" class="text-area crc-input" placeholder="十六进制数据，如 01 03 00 01 00 02（可带空格）"></textarea>
+        <textarea id="crcAscii" class="text-area crc-input" placeholder="ASCII 字符串，如 hello" hidden></textarea>
+
+        <button class="btn btn--filled tool-calc" id="btnCrcCalc">计算 CRC</button>
+        <div class="tool-result crc-result" id="crcResult" hidden></div>
+
+        <button class="crc-advanced-toggle" id="crcHistoryToggle" type="button" aria-expanded="false">
+          历史记录（最近 10 次）<span class="crc-advanced-toggle__caret">▸</span>
+        </button>
+        <div class="crc-history" id="crcHistory" hidden>
+          <button class="btn btn--text crc-history__clear" id="crcHistoryClear" type="button">清空历史</button>
+          <div class="crc-history__list" id="crcHistoryList"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 编辑页（覆盖式） -->
+    <section class="view editor" id="view-edit" hidden>
+      <div class="field">
+        <label class="field-label">笔记类型</label>
+        <div class="type-seg" id="typeSeg">
+          <button type="button" class="type-seg__btn active" data-type="note">普通笔记</button>
+          <button type="button" class="type-seg__btn" data-type="hardware">硬件外设</button>
+          <button type="button" class="type-seg__btn" data-type="bug">Bug报告</button>
+          <button type="button" class="type-seg__btn" data-type="project">项目</button>
+        </div>
+      </div>
+      <!-- 标题（硬件类型下隐藏，由“外设名称”充当标题用于双链） -->
+      <div class="field" id="titleField">
+        <input type="text" id="editTitle" class="text-input" placeholder="标题" maxlength="120" />
+      </div>
+      <!-- 硬件外设字段（仅硬件类型显示） -->
+      <div class="hw-fields" id="hwFields" hidden>
+        <div class="field hw-field">
+          <input type="text" id="hwName" class="text-input" placeholder="外设名称（如 OLED，将作为标题用于双链）" />
+        </div>
+        <div class="field hw-field">
+          <input type="text" id="hwModel" class="text-input" placeholder="型号（如 SSD1306）" />
+        </div>
+        <div class="hw-row">
+          <div class="field hw-field">
+            <input type="text" id="hwVoltage" class="text-input" placeholder="VCC 电压（如 3.3V）" />
+          </div>
+          <div class="field hw-field">
+            <label class="field-label" for="hwProtocol">通信协议</label>
+            <select id="hwProtocol" class="text-input select-input">
+              <option value="I2C">I2C</option>
+              <option value="SPI">SPI</option>
+              <option value="UART">UART</option>
+              <option value="其他">其他</option>
+            </select>
+          </div>
+        </div>
+        <div class="field hw-field">
+          <textarea id="hwPins" class="text-area" placeholder="引脚接线说明（如 SCL -> GPIO5, SDA -> GPIO4）"></textarea>
+        </div>
+      </div>
+      <!-- Bug 报告字段（仅 Bug 类型显示） -->
+      <div class="bug-fields" id="bugFields" hidden>
+        <div class="field bug-field">
+          <input type="text" id="bugSymptom" class="text-input" placeholder="现象描述（将作为标题，用于双链）" />
+        </div>
+        <div class="field bug-field">
+          <textarea id="bugSteps" class="text-area" placeholder="复现步骤（多行）"></textarea>
+        </div>
+        <div class="field bug-field">
+          <textarea id="bugRootCause" class="text-area" placeholder="根因分析（多行）"></textarea>
+        </div>
+        <div class="field bug-field bug-solved-row">
+          <label class="switch">
+            <input type="checkbox" id="bugSolved" />
+            <span class="switch__slider"></span>
+          </label>
+          <span class="bug-solved-label">是否解决</span>
+        </div>
+      </div>
+      <!-- 项目字段（仅项目类型显示） -->
+      <div class="proj-fields" id="projFields" hidden>
+        <div class="field proj-field">
+          <input type="text" id="projName" class="text-input" placeholder="项目名称（将作为标题，用于双链）" />
+        </div>
+        <div class="field proj-field">
+          <input type="text" id="projMcu" class="text-input" placeholder="所用主控（如 STM32F103C8T6）" />
+        </div>
+        <div class="field proj-field">
+          <textarea id="projPeripherals" class="text-area" placeholder="关键外设（每行一个，如 OLED、DHT11）"></textarea>
+        </div>
+        <div class="field proj-field">
+          <input type="url" id="projGithub" class="text-input" placeholder="GitHub 链接（https://...）" />
+        </div>
+        <div class="field proj-field">
+          <label class="field-label" for="projStatus">完成状态</label>
+          <select id="projStatus" class="text-input select-input">
+            <option value="规划中">规划中</option>
+            <option value="进行中">进行中</option>
+            <option value="已完成">已完成</option>
+          </select>
+        </div>
+        <div class="field proj-field">
+          <textarea id="projDesc" class="text-area" placeholder="项目简介（多行）"></textarea>
+        </div>
+      </div>
+      <div class="field editor__toolbar">
+        <button class="tool-btn" id="btnCamera" title="拍照">
+          <svg viewBox="0 0 24 24"><path d="M12 15a4 4 0 1 0-4-4 4 4 0 0 0 4 4Zm0-6a2 2 0 1 1-2 2 2 2 0 0 1 2-2Zm0 10c-4.42 0-8-1.34-8-3V8a2 2 0 0 1 2-2h1.5l1-2h5l1 2H18a2 2 0 0 1 2 2v8c0 1.66-3.58 3-8 3Z"/></svg>
+          <span>拍照</span>
+        </button>
+        <button class="tool-btn" id="btnAlbum" title="从相册选择">
+          <svg viewBox="0 0 24 24"><path d="M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2ZM8.5 13.5l2.5 3 3.5-4.5 4.5 6H5l3.5-4.5Z"/></svg>
+          <span>相册</span>
+        </button>
+        <button class="tool-btn" id="btnCode" title="插入代码块">
+          <svg viewBox="0 0 24 24"><path d="M9.4 16.6 4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4Zm5.2 0L19.2 12l-4.6-4.6L16 6l6 6-6 6-1.4-1.4Z"/></svg>
+          <span>插入代码块</span>
+        </button>
+        <button class="tool-btn" id="btnMic" title="语音输入">
+          <svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg>
+          <span>语音</span>
+        </button>
+        <input type="file" id="albumInput" accept="image/*" hidden />
+        <span class="toolbar-hint" id="toolbarHint">图片/代码以标记内嵌，刷新不丢失</span>
+      </div>
+      <div class="field">
+        <textarea id="editBody" class="text-area" placeholder="正文（支持多行，可插入图片）"></textarea>
+      </div>
+      <div class="field">
+        <input type="text" id="editTags" class="text-input" placeholder="标签，用逗号分隔，如：Flutter, Dart, 笔记" />
+        <div class="tag-preview" id="tagPreview"></div>
+      </div>
+      <div class="field">
+        <label class="field-label" for="editGoal">关联目标（可选，仅列出进行中的学习路标）</label>
+        <select id="editGoal" class="text-input select-input">
+          <option value="">不关联</option>
+        </select>
+      </div>
+    </section>
+
+    <!-- 笔记详情页（只读，含代码高亮与复制） -->
+    <section class="view detail" id="view-detail" hidden>
+      <article class="detail-card">
+        <h2 class="detail-title" id="detailTitle"></h2>
+        <div class="detail-meta" id="detailMeta"></div>
+        <!-- 串口日志解析（仅当正文为多行文本时显示） -->
+        <button class="detail-parse-btn" id="btnParseLog" hidden>📜 解析串口日志</button>
+        <div class="detail-body" id="detailBody"></div>
+        <!-- Bug 报告参数（仅 Bug 类型渲染） -->
+        <div class="bug-spec" id="bugSpec" hidden></div>
+        <!-- 项目参数（仅项目类型渲染） -->
+        <div class="proj-spec" id="projSpec" hidden></div>
+        <!-- 硬件参数（仅硬件类型渲染） -->
+        <div class="hw-spec" id="hwSpec" hidden></div>
+        <!-- 关联笔记（双向链接知识图谱） -->
+        <div class="detail-links" id="detailLinks" hidden></div>
+      </article>
+    </section>
+
+    <!-- 复习重点列表页（随缘复习收藏） -->
+    <section class="view detail" id="view-focus" hidden>
+      <div class="detail-card">
+        <h2 class="detail-title">📌 复习重点列表</h2>
+        <p class="focus-hint">这些是你标记为“待复习”的笔记。点击查看详情，或移除收藏。</p>
+        <div class="focus-list" id="focusList"></div>
+        <div class="empty-state" id="focusEmpty" hidden>
+          <svg viewBox="0 0 24 24"><path d="M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2Zm0 16H5V5h14v14ZM7 12h10v2H7v-2Zm0-4h10v2H7V8Z"/></svg>
+          <p>还没有收藏的复习重点。去首页点「随缘复习」，遇到模糊的笔记加入收藏即可。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 学习路标：目标详情页 -->
+    <section class="view detail" id="view-goal" hidden>
+      <div class="detail-card">
+        <h2 class="detail-title" id="goalDetailTitle"></h2>
+        <div class="detail-meta" id="goalDetailMeta"></div>
+        <div class="goal-detail__desc" id="goalDetailDesc"></div>
+        <div class="learn-goals__section-title">关联笔记（<span id="goalNoteCount">0</span>）</div>
+        <div class="focus-list" id="goalNoteList"></div>
+        <div class="empty-state" id="goalNoteEmpty" hidden>
+          <svg viewBox="0 0 24 24"><path d="M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2Zm0 16H5V5h14v14ZM7 12h10v2H7v-2Zm0-4h10v2H7V8Z"/></svg>
+          <p>该目标还没有关联笔记。编辑笔记时在「关联目标」里选择此目标即可。</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 悬浮添加按钮 -->
+  <button class="fab" id="fab" aria-label="新建笔记">
+    <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2Z"/></svg>
+  </button>
+  </div><!-- /main-col -->
+  </div><!-- /app-shell -->
+
+  <!-- 相机预览弹层 -->
+  <div class="modal" id="cameraModal" hidden>
+    <div class="modal__panel">
+      <video id="cameraVideo" autoplay playsinline muted></video>
+      <div class="modal__actions">
+        <button class="btn btn--text" id="cameraCancel">取消</button>
+        <button class="btn btn--filled" id="cameraCapture">拍照</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 插入代码块弹层（选择语言） -->
+  <div class="modal" id="codeModal" hidden>
+    <div class="modal__panel modal__panel--sheet">
+      <h3 class="modal__title">选择代码语言</h3>
+      <div class="lang-grid" id="langGrid">
+        <button class="lang-btn" data-lang="c">C</button>
+        <button class="lang-btn" data-lang="asm">汇编</button>
+        <button class="lang-btn" data-lang="makefile">Makefile</button>
+      </div>
+      <div class="modal__actions">
+        <button class="btn btn--text" id="codeCancel">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 底部操作条（编辑页保存/删除） -->
+  <div class="editor-actions" id="editorActions" hidden>
+    <button class="btn btn--text btn--danger" id="btnDelete">删除</button>
+    <button class="btn btn--filled" id="btnSave">保存</button>
+  </div>
+
+  <!-- 底部操作条（详情页 编辑/删除） -->
+  <div class="editor-actions" id="detailActions" hidden>
+    <button class="btn btn--text btn--danger" id="btnDetailDelete">删除</button>
+    <button class="btn btn--filled" id="btnDetailEdit">编辑</button>
+  </div>
+
+  <!-- 串口日志解析：半屏底部面板 -->
+  <div class="sheet-backdrop" id="logBackdrop" hidden></div>
+  <div class="sheet" id="logSheet" hidden>
+    <div class="sheet__bar"><div class="sheet__handle"></div></div>
+    <div class="sheet__head">
+      <span class="sheet__title">串口日志解析</span>
+      <button class="icon-btn" id="logSheetClose" aria-label="关闭">×</button>
+    </div>
+    <div class="sheet__summary" id="logSummary"></div>
+    <div class="sheet__body" id="logLines"></div>
+  </div>
+
+  <!-- 随缘复习：全屏闪卡模态框 -->
+  <div class="modal review-modal" id="reviewModal" hidden>
+    <div class="review-card">
+      <div class="review-card__type" id="reviewType"></div>
+      <h2 class="review-card__title" id="reviewTitle"></h2>
+      <div class="review-card__body" id="reviewBodyText"></div>
+      <div class="review-card__thumb" id="reviewThumb" hidden></div>
+      <div class="review-card__footer" id="reviewFooter"></div>
+      <div class="review-card__actions">
+        <button class="btn review-btn--skip" id="reviewSkip">懂了，跳过</button>
+        <button class="btn review-btn--focus" id="reviewFocus">有点模糊，加入收藏</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 轻提示 -->
+  <div class="snackbar" id="snackbar" hidden></div>
+
+  <!-- 学习路标：新建 / 编辑 目标弹窗 -->
+  <div class="modal" id="goalModal" hidden>
+    <div class="modal__panel modal__panel--sheet">
+      <h3 class="modal__title" id="goalModalTitle">新建路标</h3>
+      <div class="field">
+        <label class="field-label" for="goalNameInput">目标名称（必填）</label>
+        <input type="text" id="goalNameInput" class="text-input" placeholder="如：两周内掌握 I2C 协议" maxlength="80" />
+      </div>
+      <div class="field">
+        <label class="field-label" for="goalDueInput">截止日期（必填）</label>
+        <input type="date" id="goalDueInput" class="text-input" />
+      </div>
+      <div class="field">
+        <label class="field-label" for="goalDescInput">目标描述（选填）</label>
+        <textarea id="goalDescInput" class="text-area" placeholder="多行文本，说明你的学习计划…"></textarea>
+      </div>
+      <div class="modal__actions">
+        <button class="btn btn--text" id="goalModalCancel" type="button">取消</button>
+        <button class="btn btn--filled" id="goalModalSave" type="button">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/store.js"></script>
+  <script src="js/export.js"></script>
+  <script src="js/logparse.js"></script>
+  <script src="js/roadmap.js"></script>
+  <script src="js/review.js"></script>
+  <script src="js/crc.js"></script>
+  <script src="js/skillradar.js"></script>
+  <script src="js/learninggoals.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
