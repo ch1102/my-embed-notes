@@ -662,6 +662,7 @@
 
   // ============ 标签页 ============
   function renderTags() {
+    renderTagNetwork();
     var cloud = $('tagCloud');
     var empty = $('tagsEmpty');
     cloud.innerHTML = '';
@@ -677,6 +678,137 @@
       });
       cloud.appendChild(chip);
     });
+  }
+
+  // ============ 标签关联系数网络图 ============
+  var tagNetChart = null;     // ECharts 实例
+  var tagNetData = null;      // 当前计算出的网络数据
+  var TAG_NET_HUE = 262;      // 同色系（紫）渐变主色调
+
+  /** 主入口：进入标签页时调用，计算数据并渲染/降级 */
+  function renderTagNetwork() {
+    var wrap = $('tagNetwork');
+    if (!wrap) return;
+    var hint = $('tagNetworkHint');
+    var controls = $('tagNetworkControls');
+
+    tagNetData = window.TagNetwork.computeNetwork(Store.getAll());
+    var tagCount = tagNetData.nodes.length;
+
+    if (tagCount < 3) {
+      // 标签太少：提示并销毁图表
+      if (hint) { hint.hidden = false; hint.textContent = '标签数量太少（≥3 个才能生成关系图）。多给笔记打几个不同标签试试～'; }
+      if (controls) controls.hidden = true;
+      if (tagNetChart) { tagNetChart.dispose(); tagNetChart = null; }
+      return;
+    }
+    if (hint) hint.hidden = true;
+    if (controls) controls.hidden = false;
+
+    if (!window.echarts) {
+      // CDN 加载失败：降级提示
+      if (hint) { hint.hidden = false; hint.textContent = '图表库加载失败（ECharts CDN 被拦截），请检查网络后刷新页面。'; }
+      if (tagNetChart) { tagNetChart.dispose(); tagNetChart = null; }
+      return;
+    }
+
+    var threshold = parseFloat($('tagNetThreshold').value) || 0;
+    drawTagNet(threshold, false);
+  }
+
+  /** 绘制/更新力导向图。fresh=true 时重建布局（刷新布局按钮） */
+  function drawTagNet(threshold, fresh) {
+    var chartEl = $('tagNetworkChart');
+    if (!chartEl || !window.echarts || !tagNetData) return;
+
+    var justCreated = false;
+    if (fresh && tagNetChart) { tagNetChart.dispose(); tagNetChart = null; }
+    if (!tagNetChart) {
+      tagNetChart = window.echarts.init(chartEl);
+      tagNetChart.on('click', function (params) {
+        if (params.dataType === 'node' && params.name) goHomeWithTag(params.name);
+      });
+      justCreated = true;
+    }
+
+    var net = tagNetData;
+    var n = net.nodes.length;
+    // 节点：同一色系按出现频次映射亮度（渐变）
+    var ordered = net.nodes.slice().sort(function (a, b) { return b.value - a.value; });
+    var colorOf = {};
+    ordered.forEach(function (node, i) {
+      var light = 42 + (n <= 1 ? 0 : (i / (n - 1)) * 38); // 42%~80%
+      colorOf[node.name] = 'hsl(' + TAG_NET_HUE + ',72%,' + light.toFixed(1) + '%)';
+    });
+    var labelColor = isDarkTheme() ? '#e9e9f0' : '#2b2b33';
+
+    var nodes = net.nodes.map(function (node) {
+      return {
+        name: node.name,
+        value: node.value,
+        symbolSize: node.symbolSize,
+        itemStyle: { color: colorOf[node.name] },
+        label: { color: labelColor }
+      };
+    });
+
+    // 连线：仅保留关联度 > 阈值的；粗细/透明度/颜色随关联度增强
+    var links = net.links
+      .filter(function (l) { return l.corr > threshold; })
+      .map(function (l) {
+        return {
+          source: l.source,
+          target: l.target,
+          co: l.co,
+          corr: l.corr,
+          lineStyle: {
+            width: 1 + l.corr * 9,
+            opacity: 0.25 + l.corr * 0.65,
+            curveness: 0.08,
+            color: 'rgba(124,92,255,' + (0.35 + l.corr * 0.6).toFixed(2) + ')'
+          }
+        };
+      });
+
+    var dark = isDarkTheme();
+    var textColor = dark ? '#cfcfe0' : '#3a3a44';
+    var option = {
+      backgroundColor: 'transparent',
+      tooltip: {
+        backgroundColor: dark ? 'rgba(30,30,40,.92)' : 'rgba(255,255,255,.96)',
+        borderColor: 'rgba(124,92,255,.4)',
+        textStyle: { color: textColor, fontSize: 12 },
+        formatter: function (p) {
+          if (p.dataType === 'node') {
+            return '<b>' + escapeHtml(p.data.name) + '</b><br/>出现 ' + p.data.value + ' 篇笔记';
+          }
+          return escapeHtml(p.data.source) + ' · ' + escapeHtml(p.data.target) +
+            '<br/>关联度 ' + p.data.corr.toFixed(2) + '（共现 ' + p.data.co + ' 次）';
+        }
+      },
+      series: [{
+        type: 'graph',
+        layout: 'force',
+        roam: true,
+        draggable: true,
+        data: nodes,
+        links: links,
+        force: { repulsion: 150, edgeLength: [70, 200], gravity: 0.08, friction: 0.18 },
+        label: { show: true, position: 'right', fontSize: 12, formatter: '{b}' },
+        lineStyle: { color: 'source' },
+        emphasis: { focus: 'adjacency', lineStyle: { width: 4 } },
+        scaleLimit: { min: 0.4, max: 4 }
+      }]
+    };
+    tagNetChart.setOption(option, justCreated || fresh);
+    tagNetChart.resize(); // 修正切换标签/窗口变化后的尺寸（display:none 后恢复会量错）
+  }
+
+  /** 是否深色主题（用于图表配色） */
+  function isDarkTheme() {
+    try {
+      return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    } catch (e) { return false; }
   }
 
   // ============ 统计页 ============
@@ -2570,6 +2702,21 @@
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's' && state.view === 'edit') {
         e.preventDefault(); saveNote();
       }
+    });
+
+    // 标签关联系数网络图：阈值滑块 / 刷新布局 / 自适应
+    var tnThreshold = $('tagNetThreshold');
+    if (tnThreshold) tnThreshold.addEventListener('input', function () {
+      var v = parseFloat(this.value) || 0;
+      var lbl = $('tagNetThresholdVal'); if (lbl) lbl.textContent = v.toFixed(2);
+      if (tagNetData) drawTagNet(v, false); // 阈值变化：保留节点布局（merge）
+    });
+    var tnRefresh = $('tagNetRefresh');
+    if (tnRefresh) tnRefresh.addEventListener('click', function () {
+      if (tagNetData) drawTagNet(parseFloat($('tagNetThreshold').value) || 0, true); // 刷新布局：重建力导向
+    });
+    window.addEventListener('resize', function () {
+      if (tagNetChart) tagNetChart.resize();
     });
   }
 

@@ -1096,3 +1096,49 @@ svg { width: 24px; height: 24px; fill: currentColor; }
   .fmt-toolbar { background: rgba(255,255,255,.05); }
   .rich-editor mark, .detail-body mark { color: #1c1b1f; }
 }
+
+/* ---------- 标签关联系数网络图 ---------- */
+.tag-network {
+  background: var(--surface);
+  border: 1px solid var(--outline);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 14px 16px 6px;
+  margin-bottom: 16px;
+}
+.tag-network__head {
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 10px; margin-bottom: 8px;
+}
+.tag-network__title {
+  font-size: 16px; font-weight: 600; color: var(--on-surface); margin: 0;
+}
+.tag-network__controls {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+}
+.tag-network__threshold {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--on-surface-variant);
+}
+.tag-network__threshold span { color: var(--primary); font-weight: 600; }
+.tag-network__threshold input[type="range"] {
+  width: 140px; accent-color: var(--primary); cursor: pointer;
+}
+.btn-ghost {
+  min-height: 32px; padding: 0 14px;
+  border: 1px solid var(--outline); border-radius: 999px;
+  background: var(--surface); color: var(--primary);
+  font-size: 13px; font-family: inherit; cursor: pointer;
+}
+.btn-ghost:hover { background: var(--surface-variant); }
+.btn-ghost:active { transform: scale(.97); }
+.tag-network__chart {
+  width: 100%; height: 460px;
+}
+.tag-network #tagNetworkHint {
+  padding: 40px 24px; font-size: 14px;
+}
+@media (max-width: 520px) {
+  .tag-network__head { flex-direction: column; align-items: flex-start; }
+  .tag-network__chart { height: 360px; }
+}

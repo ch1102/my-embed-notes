@@ -103,6 +103,23 @@
 
     <!-- 标签页 -->
     <section class="view" id="view-tags" hidden>
+      <!-- 标签关联系数网络图 -->
+      <div class="tag-network" id="tagNetwork">
+        <div class="tag-network__head">
+          <h3 class="tag-network__title">标签关联系数网络图</h3>
+          <div class="tag-network__controls" id="tagNetworkControls">
+            <label class="tag-network__threshold">
+              关联度 &gt; <span id="tagNetThresholdVal">0.00</span>
+              <input type="range" id="tagNetThreshold" min="0" max="1" step="0.05" value="0" />
+            </label>
+            <button type="button" class="btn-ghost" id="tagNetRefresh">刷新布局</button>
+          </div>
+        </div>
+        <div class="tag-network__chart" id="tagNetworkChart"></div>
+        <p class="empty-state" id="tagNetworkHint" hidden>
+          标签数量太少（≥3 个才能生成关系图）。多给笔记打几个不同标签试试～
+        </p>
+      </div>
       <div class="tag-cloud" id="tagCloud"></div>
       <div class="empty-state" id="tagsEmpty" hidden>
         <p>还没有任何标签。</p>
@@ -638,6 +655,7 @@
   </div>
 
   <script src="js/richtext.js"></script>
+  <script src="js/tagnetwork.js"></script>
   <script src="js/store.js"></script>
   <script src="js/export.js"></script>
   <script src="js/logparse.js"></script>
@@ -647,6 +665,8 @@
   <script src="js/skillradar.js"></script>
   <script src="js/learninggoals.js"></script>
   <script src="js/github-sync.js"></script>
+  <!-- 图表库：标签关联系数网络图（力导向图）。如 CDN 被拦截，页面会给出降级提示 -->
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
