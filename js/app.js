@@ -68,6 +68,18 @@
   var projEmpty = $('projEmpty');
   var projSpec = $('projSpec');
 
+  // GitHub 同步
+  var syncModal = $('syncModal');
+  var syncRepo = $('syncRepo');
+  var syncBranch = $('syncBranch');
+  var syncPath = $('syncPath');
+  var syncToken = $('syncToken');
+  var syncStatus = $('syncStatus');
+  var syncTest = $('syncTest');
+  var syncSave = $('syncSave');
+  var syncNowBtn = $('syncNow');
+  var syncClose = $('syncClose');
+
   // 随缘复习（闪卡）
   var btnReview = $('btnReview');
   var reviewModal = $('reviewModal');
@@ -645,6 +657,7 @@
     if (!window.confirm('确定删除笔记“' + (note.title || '（无标题）') + '”吗？此操作不可撤销。')) return;
     Store.remove(id);
     if (window.SkillRadar) window.SkillRadar.recomputeOnNoteChange();
+    if (window.GitHubSync) window.GitHubSync.onLocalChange();
     closeOpenCard();
     showSnack('已删除');
     renderHome();
@@ -1465,6 +1478,7 @@
     if (window.SkillRadar) window.SkillRadar.recomputeOnNoteChange(); // 笔记变更 → 重算未被手动校准的维度
     showSnack(state.editId ? '已更新' : '已保存');
     state.editId = null;
+    if (window.GitHubSync) window.GitHubSync.onLocalChange(); // 改动后自动推送（防抖）
     navigate('home');
   }
 
@@ -1476,6 +1490,7 @@
     Store.remove(state.editId);
     state.editId = null;
     if (window.SkillRadar) window.SkillRadar.recomputeOnNoteChange();
+    if (window.GitHubSync) window.GitHubSync.onLocalChange();
     showSnack('已删除');
     navigate('home');
   }
@@ -2360,10 +2375,11 @@
 
   // ============ 事件绑定 ============
   function bindEvents() {
-    // 侧边栏导航（导出按钮单独处理，不切换视图/不高亮）
+    // 侧边栏导航（导出 / 同步 按钮单独处理，不切换视图/不高亮）
     Array.prototype.forEach.call(document.querySelectorAll('.nav-item'), function (b) {
       b.addEventListener('click', function () {
         if (b.dataset.nav === 'export') exportBackup();
+        else if (b.dataset.nav === 'sync') openSyncModal();
         else navigate(b.dataset.nav);
         closeSidebar(); // 移动端点击后收起抽屉
       });
@@ -2467,6 +2483,7 @@
       Store.remove(state.detailId);
       state.detailId = null;
       if (window.SkillRadar) window.SkillRadar.recomputeOnNoteChange();
+      if (window.GitHubSync) window.GitHubSync.onLocalChange();
       showSnack('已删除');
       navigate('home');
     });
@@ -2530,6 +2547,21 @@
     goalModalSave.addEventListener('click', saveGoalModal);
     goalModal.addEventListener('click', function (e) { if (e.target === this) goalModal.hidden = true; });
 
+    // GitHub 同步：打开 / 保存 / 测试连接 / 立即同步 / 关闭
+    syncSave.addEventListener('click', saveSyncConfig);
+    syncTest.addEventListener('click', testSyncConnection);
+    syncNowBtn.addEventListener('click', function () {
+      if (!window.GitHubSync) { showSnack('同步模块未加载'); return; }
+      if (!window.GitHubSync.isConfigured()) { showSnack('请先填写并保存配置'); return; }
+      syncNowBtn.disabled = true; syncNowBtn.textContent = '同步中…';
+      window.GitHubSync.syncNow()
+        .then(function () { showSnack('同步完成 ✓'); refreshHomeAndStats(); })
+        .catch(function () { /* 错误已由 onError 提示 */ })
+        .then(function () { syncNowBtn.disabled = false; syncNowBtn.textContent = '立即同步'; refreshSyncStatus(); });
+    });
+    syncClose.addEventListener('click', function () { syncModal.hidden = true; });
+    syncModal.addEventListener('click', function (e) { if (e.target === this) syncModal.hidden = true; });
+
     // 桌面端 Ctrl/Cmd+S 保存
     document.addEventListener('keydown', function (e) {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's' && state.view === 'edit') {
@@ -2538,10 +2570,86 @@
     });
   }
 
+  // ============ GitHub 同步 ============
+  function openSyncModal() {
+    var c = (window.GitHubSync && window.GitHubSync.getConfig()) || {};
+    syncRepo.value = (c.owner && c.repo) ? (c.owner + '/' + c.repo) : (c.owner || '');
+    syncBranch.value = c.branch || 'main';
+    syncPath.value = c.path || 'data/notes.json';
+    syncToken.value = c.token || '';
+    refreshSyncStatus();
+    syncModal.hidden = false;
+  }
+
+  function fmtTime(ts) {
+    var d = new Date(ts);
+    var p = function (n) { return (n < 10 ? '0' : '') + n; };
+    return (d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+
+  function refreshSyncStatus() {
+    if (!window.GitHubSync) return;
+    var s = window.GitHubSync.getStatus();
+    var txt;
+    if (!s.configured) txt = '未配置（填写上方信息并保存）';
+    else {
+      txt = '已配置仓库：' + window.GitHubSync.repoSlug();
+      if (s.lastSynced) txt += '　·　上次同步：' + fmtTime(s.lastSynced);
+      if (s.pending) txt += '　·　有改动待同步';
+      if (s.lastError) txt += '　·　⚠ ' + s.lastError;
+    }
+    syncStatus.textContent = txt;
+    syncStatus.classList.toggle('sync-status--error', !!(s.lastError));
+  }
+
+  function saveSyncConfig() {
+    if (!window.GitHubSync) { showSnack('同步模块未加载'); return; }
+    var parts = syncRepo.value.trim().split('/');
+    var owner = parts[0].trim();
+    var repo = (parts[1] || '').trim();
+    if (!owner || !repo) { showSnack('请填写 owner/repo，如 yourname/notes-data'); syncRepo.focus(); return; }
+    if (!syncToken.value.trim()) { showSnack('请填写 Access Token'); syncToken.focus(); return; }
+    window.GitHubSync.saveConfig({
+      owner: owner, repo: repo,
+      branch: syncBranch.value.trim() || 'main',
+      path: syncPath.value.trim() || 'data/notes.json',
+      token: syncToken.value.trim()
+    });
+    showSnack('配置已保存');
+    refreshSyncStatus();
+  }
+
+  function testSyncConnection() {
+    if (!window.GitHubSync) { showSnack('同步模块未加载'); return; }
+    var parts = syncRepo.value.trim().split('/');
+    if (!parts[0].trim() || !parts[1] || !syncToken.value.trim()) {
+      showSnack('请先填写仓库与 Token 再测试'); return;
+    }
+    syncTest.disabled = true; syncTest.textContent = '测试中…';
+    window.GitHubSync.testConnection()
+      .then(function (r) { showSnack(r.ok ? ('连接成功：' + r.message) : ('连接失败：' + r.message)); })
+      .catch(function (e) { showSnack('连接错误：' + (e && e.message || e)); })
+      .then(function () { syncTest.disabled = false; syncTest.textContent = '测试连接'; refreshSyncStatus(); });
+  }
+
+  function refreshHomeAndStats() {
+    renderHome();
+    renderStats();
+  }
+
   // ============ 启动 ============
   function init() {
     bindEvents();
     if (window.CRC) applyCrcPreset(crcPreset.value); // 预填高级参数与默认预设一致
+    if (window.GitHubSync) {
+      window.GitHubSync.setHandlers({
+        onStatus: function () { if (syncStatus) refreshSyncStatus(); },
+        onError: function (msg) { showSnack(msg); },
+        onSyncStart: function () {}
+      });
+      // 启动拉取（静默：失败只记状态，不打扰）；拉取完成后刷新列表
+      window.GitHubSync.initPull(function () { renderHome(); });
+    }
     navigate('home');
   }
 

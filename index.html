@@ -36,6 +36,10 @@
           <svg viewBox="0 0 24 24"><path d="M12 3 7 8h3v6h4V8h3l-5-5Zm-7 14v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2h-2v2H7v-2H5Z"/></svg>
           <span>导出</span>
         </button>
+        <button class="nav-item nav-item--action" data-nav="sync" title="GitHub 同步设置">
+          <svg viewBox="0 0 24 24"><path d="M19 12a7 7 0 0 0-7-7 7 7 0 0 0-6.34 4H4a1 1 0 0 0 0 2h1.66A7 7 0 0 0 12 19a7 7 0 0 0 6.34-4H20a1 1 0 0 0 0-2h-1.66A6.96 6.96 0 0 0 19 12Zm-7 5a5 5 0 1 1 0-10 5 5 0 0 1 0 10Zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/></svg>
+          <span>同步</span>
+        </button>
       </nav>
     </aside>
     <!-- 移动端抽屉遮罩 -->
@@ -546,6 +550,41 @@
     </div>
   </div>
 
+  <!-- GitHub 同步设置 -->
+  <div class="modal" id="syncModal" hidden>
+    <div class="modal__panel modal__panel--sheet">
+      <h3 class="modal__title">☁️ GitHub 同步设置</h3>
+      <p class="sync-hint">把笔记同步到一个<strong>私有</strong> GitHub 仓库（仅通过 API + Token 访问，不会被公开）。页面本身部署在另一个公开仓库即可。</p>
+
+      <div class="field">
+        <label class="field-label" for="syncRepo">仓库（owner/repo）</label>
+        <input type="text" id="syncRepo" class="text-input" placeholder="例如：yourname/notes-data" />
+      </div>
+      <div class="field">
+        <label class="field-label" for="syncBranch">分支</label>
+        <input type="text" id="syncBranch" class="text-input" placeholder="main" />
+      </div>
+      <div class="field">
+        <label class="field-label" for="syncPath">数据文件路径</label>
+        <input type="text" id="syncPath" class="text-input" placeholder="data/notes.json" />
+      </div>
+      <div class="field">
+        <label class="field-label" for="syncToken">Access Token（PAT）</label>
+        <input type="password" id="syncToken" class="text-input" placeholder="ghp_xxx，需 repo 权限" autocomplete="off" />
+        <p class="sync-token-note">在 GitHub → Settings → Developer settings → Personal access tokens 生成一个带 <code>repo</code> 权限的 token。它只存在你本机浏览器，不会进仓库。也可用环境变量式管理，但本工具暂只支持粘贴保存。</p>
+      </div>
+
+      <div class="sync-status" id="syncStatus">未配置</div>
+
+      <div class="modal__actions">
+        <button class="btn btn--text" id="syncTest" type="button">测试连接</button>
+        <button class="btn btn--text" id="syncSave" type="button">保存配置</button>
+        <button class="btn btn--filled" id="syncNow" type="button">立即同步</button>
+        <button class="btn btn--text" id="syncClose" type="button">关闭</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 轻提示 -->
   <div class="snackbar" id="snackbar" hidden></div>
 
@@ -580,6 +619,7 @@
   <script src="js/crc.js"></script>
   <script src="js/skillradar.js"></script>
   <script src="js/learninggoals.js"></script>
+  <script src="js/github-sync.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

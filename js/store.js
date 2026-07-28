@@ -127,6 +127,16 @@
     write(list);
   }
 
+  /**
+   * 整体替换笔记（用于 GitHub 同步拉取后回写本地）。
+   * 只保留含 id 的对象，避免脏数据写坏 localStorage。
+   */
+  function replaceAll(list) {
+    if (!Array.isArray(list)) return;
+    var clean = list.filter(function (n) { return n && typeof n === 'object' && n.id; });
+    write(clean);
+  }
+
   /** 按标题模糊搜索（不区分大小写） */
   function searchByTitle(q) {
     var kw = (q || '').trim().toLowerCase();
@@ -300,6 +310,7 @@
     getById: getById,
     save: save,
     remove: remove,
+    replaceAll: replaceAll,
     searchByTitle: searchByTitle,
     searchAll: searchAll,
     getByTag: getByTag,
