@@ -72,7 +72,8 @@
       var lowerKw = dim.keywords.map(function (k) { return k.toLowerCase(); });
       var hit = 0;
       notes.forEach(function (n) {
-        var hay = ((n.title || '') + ' ' + (n.body || '') + ' ' + (n.tags || []).join(' ')).toLowerCase();
+        var bodyText = (global.RichText && global.RichText.toPlainText) ? global.RichText.toPlainText(n.body || '') : (n.body || '');
+        var hay = ((n.title || '') + ' ' + bodyText + ' ' + (n.tags || []).join(' ')).toLowerCase();
         for (var i = 0; i < lowerKw.length; i++) {
           if (hay.indexOf(lowerKw[i]) !== -1) { hit++; break; }
         }

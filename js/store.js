@@ -16,6 +16,15 @@
   var CODE_TOKEN_RE = /\[code:([a-zA-Z0-9_+-]+)\]([\s\S]*?)\[\/code\]/g;
   // 双向链接 token： [[笔记标题]]
   var LINK_TOKEN_RE = /\[\[([^\[\]]+)\]\]/g;
+  // 富文本 HTML 中的图片 / 代码块 / 双链
+  var HTML_IMG_RE = /<img\b[^>]*src="(data:image\/[^"]+)"[^>]*>/g;
+  var HTML_PRE_RE = /<pre\b([^>]*)>([\s\S]*?)<\/pre>/g;
+  var HTML_LINK_RE = /<span\b[^>]*data-link="([^"]*)"[^>]*>/g;
+
+  /** 正文转纯文本（依赖 richtext.js，缺失时原样返回） */
+  function plain(body) {
+    return (global.RichText && global.RichText.toPlainText) ? global.RichText.toPlainText(body || '') : (body || '');
+  }
 
   /** 安全解析标签：逗号（中/英文）分隔，去空白、去空、去重、保序 */
   function parseTags(raw) {
@@ -153,7 +162,7 @@
     var list = getAll();
     if (!kw) return list;
     return list.filter(function (n) {
-      var hay = ((n.title || '') + ' ' + (n.body || '') + ' ' + (n.tags || []).join(' ')).toLowerCase();
+      var hay = ((n.title || '') + ' ' + plain(n.body) + ' ' + (n.tags || []).join(' ')).toLowerCase();
       return hay.indexOf(kw) !== -1;
     });
   }
@@ -225,22 +234,36 @@
     };
   }
 
-  /** 提取正文中所有图片 data URL（用于统计/清理，当前保留内嵌不做清理） */
+  /** 提取正文中所有图片 data URL（兼容旧 token 与富文本 HTML） */
   function extractImages(body) {
     var out = [];
     var m;
+    var s = body || '';
     IMG_TOKEN_RE.lastIndex = 0;
-    while ((m = IMG_TOKEN_RE.exec(body)) !== null) out.push(m[1]);
+    while ((m = IMG_TOKEN_RE.exec(s)) !== null) out.push(m[1]);
+    HTML_IMG_RE.lastIndex = 0;
+    while ((m = HTML_IMG_RE.exec(s)) !== null) {
+      // HTML 属性中 & 被转义为 &amp;，还原
+      out.push(m[1].replace(/&amp;/g, '&'));
+    }
     return out;
   }
 
-  /** 提取正文中所有代码块（用于详情页高亮与复制） */
+  /** 提取正文中所有代码块（兼容旧 token 与富文本 HTML <pre>） */
   function extractCodeBlocks(body) {
     var out = [];
     var m;
+    var s = body || '';
     CODE_TOKEN_RE.lastIndex = 0;
-    while ((m = CODE_TOKEN_RE.exec(body)) !== null) {
+    while ((m = CODE_TOKEN_RE.exec(s)) !== null) {
       out.push({ lang: m[1], code: m[2] });
+    }
+    HTML_PRE_RE.lastIndex = 0;
+    while ((m = HTML_PRE_RE.exec(s)) !== null) {
+      var langM = /data-lang="([^"]*)"/.exec(m[1]);
+      var code = m[2].replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '')
+        .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+      out.push({ lang: langM ? langM[1] : '', code: code });
     }
     return out;
   }
@@ -250,16 +273,20 @@
     return extractCodeBlocks(body || '').length;
   }
 
-  /** 提取正文中所有 [[笔记标题]] 链接（去重、保序，返回标题字符串数组） */
+  /** 提取正文中所有双链（兼容 [[标题]] token 与富文本 <span data-link>；去重、保序） */
   function extractLinks(body) {
     var out = [];
     var seen = {};
     var m;
-    LINK_TOKEN_RE.lastIndex = 0;
-    while ((m = LINK_TOKEN_RE.exec(body || '')) !== null) {
-      var t = m[1].trim();
+    var s = body || '';
+    function add(t) {
+      t = (t || '').trim();
       if (t && !seen[t]) { seen[t] = true; out.push(t); }
     }
+    HTML_LINK_RE.lastIndex = 0;
+    while ((m = HTML_LINK_RE.exec(s)) !== null) add(m[1].replace(/&amp;/g, '&'));
+    LINK_TOKEN_RE.lastIndex = 0;
+    while ((m = LINK_TOKEN_RE.exec(s)) !== null) add(m[1]);
     return out;
   }
 

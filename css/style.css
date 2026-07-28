@@ -1038,3 +1038,61 @@ svg { width: 24px; height: 24px; fill: currentColor; }
   .sync-status { background: rgba(255,255,255,.06); }
   .sync-status--error { background: rgba(242,184,181,.12); }
 }
+
+/* ---------- 富文本编辑器 ---------- */
+.rich-editor {
+  min-height: 220px; max-height: 60vh; overflow-y: auto;
+  line-height: 1.6; cursor: text; word-break: break-word;
+}
+.rich-editor:empty::before {
+  content: attr(data-placeholder);
+  color: var(--on-surface-variant); opacity: .7; pointer-events: none;
+}
+.rich-editor img { max-width: 100%; border-radius: 8px; display: block; margin: 8px 0; }
+.rich-editor pre.cb {
+  background: #1e1e2e; color: #cdd6f4; border-radius: 10px;
+  padding: 12px; font-size: 13px; overflow-x: auto; white-space: pre-wrap;
+  font-family: 'Cascadia Code', Consolas, Monaco, monospace;
+  position: relative; margin: 10px 0;
+}
+.rich-editor pre.cb::before {
+  content: attr(data-lang);
+  position: absolute; top: 4px; right: 10px;
+  font-size: 11px; color: #89b4fa; text-transform: uppercase; opacity: .8;
+}
+.rich-editor .rt-link, .rich-editor span[data-link] { color: var(--primary); font-weight: 500; }
+.rich-editor mark { border-radius: 3px; padding: 0 2px; }
+
+/* 格式工具栏 */
+.fmt-toolbar {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  padding: 8px 10px; border: 1px solid var(--outline); border-radius: 12px;
+  background: var(--surface-variant); margin-bottom: -6px;
+}
+.fmt-btn {
+  min-width: 34px; height: 32px; padding: 0 8px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid transparent; border-radius: 8px;
+  background: transparent; color: var(--on-surface);
+  font-size: 14px; cursor: pointer; font-family: inherit;
+}
+.fmt-btn:hover { background: var(--surface); border-color: var(--outline); }
+.fmt-btn:active { background: var(--primary-container); }
+.fmt-btn--clear { font-size: 12px; color: var(--on-surface-variant); }
+.fmt-sep { width: 1px; height: 20px; background: var(--outline); margin: 0 2px; }
+.fmt-group { display: inline-flex; gap: 2px; }
+.hl-dot { width: 16px; height: 16px; border-radius: 50%; display: inline-block; border: 1px solid rgba(0,0,0,.15); }
+.fmt-select {
+  height: 32px; border: 1px solid var(--outline); border-radius: 8px;
+  background: var(--surface); color: var(--on-surface);
+  font-size: 13px; padding: 0 6px; outline: none; cursor: pointer; font-family: inherit;
+}
+
+/* 详情页富文本正文 */
+.detail-body { line-height: 1.7; word-break: break-word; }
+.detail-body mark { border-radius: 3px; padding: 0 2px; }
+.detail-body img { max-width: 100%; border-radius: 10px; display: block; margin: 10px 0; }
+@media (prefers-color-scheme: dark) {
+  .fmt-toolbar { background: rgba(255,255,255,.05); }
+  .rich-editor mark, .detail-body mark { color: #1c1b1f; }
+}

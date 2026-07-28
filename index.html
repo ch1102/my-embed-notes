@@ -413,10 +413,36 @@
           <span>语音</span>
         </button>
         <input type="file" id="albumInput" accept="image/*" hidden />
-        <span class="toolbar-hint" id="toolbarHint">图片/代码以标记内嵌，刷新不丢失</span>
+        <span class="toolbar-hint" id="toolbarHint">富文本正文，图片/代码内嵌，刷新不丢失</span>
+      </div>
+      <!-- 富文本格式工具栏 -->
+      <div class="field fmt-toolbar" id="fmtToolbar">
+        <button type="button" class="fmt-btn" data-cmd="bold" title="加粗 (Ctrl+B)"><b>B</b></button>
+        <button type="button" class="fmt-btn" data-cmd="italic" title="斜体 (Ctrl+I)"><i>I</i></button>
+        <button type="button" class="fmt-btn" data-cmd="underline" title="下划线 (Ctrl+U)"><u>U</u></button>
+        <span class="fmt-sep"></span>
+        <!-- 高亮色 -->
+        <div class="fmt-group" id="fmtHilite">
+          <button type="button" class="fmt-btn fmt-btn--hl" data-hl="#fff59d" title="黄色高亮"><span class="hl-dot" style="background:#fff59d"></span></button>
+          <button type="button" class="fmt-btn fmt-btn--hl" data-hl="#a5d6a7" title="绿色高亮"><span class="hl-dot" style="background:#a5d6a7"></span></button>
+          <button type="button" class="fmt-btn fmt-btn--hl" data-hl="#90caf9" title="蓝色高亮"><span class="hl-dot" style="background:#90caf9"></span></button>
+          <button type="button" class="fmt-btn fmt-btn--hl" data-hl="#f48fb1" title="粉色高亮"><span class="hl-dot" style="background:#f48fb1"></span></button>
+        </div>
+        <span class="fmt-sep"></span>
+        <!-- 字号 -->
+        <select id="fmtFontSize" class="fmt-select" title="字号">
+          <option value="">字号</option>
+          <option value="2">小</option>
+          <option value="3">正常</option>
+          <option value="5">大</option>
+          <option value="6">特大</option>
+        </select>
+        <span class="fmt-sep"></span>
+        <button type="button" class="fmt-btn fmt-btn--clear" data-cmd="removeFormat" title="清除格式">✕格式</button>
       </div>
       <div class="field">
-        <textarea id="editBody" class="text-area" placeholder="正文（支持多行，可插入图片）"></textarea>
+        <div id="editBody" class="text-area rich-editor" contenteditable="true"
+             data-placeholder="正文（支持多行，可插入图片，选中文字后用上方工具栏设置格式）"></div>
       </div>
       <div class="field">
         <input type="text" id="editTags" class="text-input" placeholder="标签，用逗号分隔，如：Flutter, Dart, 笔记" />
@@ -611,6 +637,7 @@
     </div>
   </div>
 
+  <script src="js/richtext.js"></script>
   <script src="js/store.js"></script>
   <script src="js/export.js"></script>
   <script src="js/logparse.js"></script>

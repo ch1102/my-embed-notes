@@ -49,6 +49,16 @@
   // 处理 [img:...] 与 [code:lang]...[/code]；其余文本原样保留（含 [[双链]]）
   var MD_RE = /\[img:(data:image\/[^;\s]+;base64,[^\]]+)\]|\[code:([a-zA-Z0-9_+-]+)\]([\s\S]*?)\[\/code\]/g;
   function bodyToMarkdown(body, imageCollector) {
+    // 富文本 HTML 正文：走 RichText.toMarkdown，图片仍收集到 images/ 目录
+    if (global.RichText && global.RichText.looksLikeHtml && global.RichText.looksLikeHtml(body || '')) {
+      return global.RichText.toMarkdown(body, function (dataUrl) {
+        var info = dataUrlToBytes(dataUrl);
+        // 用收集器长度做全局唯一序号，避免多篇笔记图片重名
+        var fname = 'images/img_' + imageCollector.length + '.' + info.ext;
+        imageCollector.push({ name: fname, data: info.bytes });
+        return '![image](' + fname + ')';
+      });
+    }
     var out = '';
     var last = 0, m, idx = 0;
     MD_RE.lastIndex = 0;

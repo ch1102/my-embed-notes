@@ -6,6 +6,7 @@
   'use strict';
 
   var Store = window.NoteStore;
+  var RT = window.RichText;
 
   // ---- DOM 引用 ----
   var $ = function (id) { return document.getElementById(id); };
@@ -199,13 +200,9 @@
     return Store.extractImages(body || '').length;
   }
 
-  /** 生成卡片预览文本（去除图片/代码 token，截取前 120 字） */
+  /** 生成卡片预览文本（HTML/旧 token 均转纯文本，截取前 120 字） */
   function previewText(body) {
-    var text = (body || '')
-      .replace(Store.IMG_TOKEN_RE, '')
-      .replace(Store.CODE_TOKEN_RE, '')
-      .replace(/\s+/g, ' ')
-      .trim();
+    var text = RT.toPlainText(body || '').replace(/\s+/g, ' ').trim();
     return text.length > 120 ? text.slice(0, 120) + '…' : text;
   }
 
@@ -1293,7 +1290,7 @@
       currentEditType = note.type === 'project' ? 'project'
         : (note.type === 'bug' ? 'bug' : (note.type === 'hardware' ? 'hardware' : 'note'));
       titleEl.value = note.title || '';
-      bodyEl.value = note.body || '';
+      bodyEl.innerHTML = RT.sanitize(RT.normalizeBody(note.body || ''));
       tagsEl.value = (note.tags || []).join(', ');
       hwName.value = note.hwName || '';
       hwModel.value = note.hwModel || '';
@@ -1314,7 +1311,7 @@
     } else {
       currentEditType = 'note';
       titleEl.value = '';
-      bodyEl.value = '';
+      bodyEl.innerHTML = '';
       tagsEl.value = '';
       hwName.value = '';
       hwModel.value = '';
@@ -1396,16 +1393,14 @@
     });
   }
 
-  /** 在光标处插入图片 token（data URL） */
+  /** 在光标处插入图片（data URL，直接插入 <img> 节点） */
   function insertImageToken(dataUrl) {
     var bodyEl = $('editBody');
-    var token = '\n[img:' + dataUrl + ']\n';
-    var pos = bodyEl.selectionStart != null ? bodyEl.selectionStart : bodyEl.value.length;
-    var v = bodyEl.value;
-    bodyEl.value = v.slice(0, pos) + token + v.slice(pos);
-    var np = pos + token.length;
-    bodyEl.setSelectionRange(np, np);
-    bodyEl.focus();
+    var img = document.createElement('img');
+    img.src = dataUrl;
+    img.alt = '图片';
+    RT.insertNodeAtCursor(bodyEl, img);
+    RT.insertNodeAtCursor(bodyEl, document.createElement('br'));
     updateBodyPreview();
   }
 
@@ -1417,7 +1412,10 @@
 
   function saveNote() {
     var type = currentEditType;
-    var body = $('editBody').value;
+    // 富文本：取 HTML 并做白名单清洗；若无有效内容（无文字/图片/代码）则存空串
+    var body = RT.sanitize($('editBody').innerHTML);
+    var bodyPlain = RT.toPlainText(body);
+    if (!bodyPlain.trim() && !/<img\b/i.test(body) && !/<pre\b/i.test(body)) body = '';
     var tagsRaw = $('editTags').value;
 
     var title;
@@ -1517,8 +1515,8 @@
 
     renderDetailBody($('detailBody'), note.body);
 
-    // 串口日志解析按钮：仅当正文包含多行文本时显示
-    if ((note.body || '').indexOf('\n') !== -1) {
+    // 串口日志解析按钮：仅当正文（纯文本）包含多行时显示
+    if (RT.toPlainText(note.body || '').indexOf('\n') !== -1) {
       btnParseLog.hidden = false;
       btnParseLog.onclick = function () { openLogSheet(note); };
     } else {
@@ -1657,50 +1655,31 @@
     detailLinks.appendChild(list);
   }
 
-  /** 渲染详情正文：文本（含图片）与代码块交错 */
+  /** 渲染详情正文：富文本 HTML（旧 token 自动转换），代码块/双链替换为交互组件 */
   function renderDetailBody(container, body) {
     container.innerHTML = '';
-    var re = Store.CODE_TOKEN_RE;
-    re.lastIndex = 0;
-    var last = 0, m;
-    while ((m = re.exec(body)) !== null) {
-      if (m.index > last) appendTextSegment(container, body.slice(last, m.index));
-      appendCodeBlock(container, m[1], m[2]);
-      last = re.lastIndex;
-    }
-    if (last < body.length) appendTextSegment(container, body.slice(last));
-  }
+    var html = RT.sanitize(RT.normalizeBody(body || ''));
+    var tmp = document.createElement('div');
+    tmp.innerHTML = html;
 
-  /** 文本段：按图片 / 双链 token 拆分并交错渲染 */
-  function appendTextSegment(container, text) {
-    if (!text) return;
-    var imgRe = Store.IMG_TOKEN_RE, linkRe = Store.LINK_TOKEN_RE;
-    imgRe.lastIndex = 0; linkRe.lastIndex = 0;
-    var matches = [];
-    var m;
-    while ((m = imgRe.exec(text)) !== null) matches.push({ type: 'img', start: m.index, end: imgRe.lastIndex, val: m[1] });
-    while ((m = linkRe.exec(text)) !== null) matches.push({ type: 'link', start: m.index, end: linkRe.lastIndex, val: m[1] });
-    matches.sort(function (a, b) { return a.start - b.start; });
-    var last = 0;
-    matches.forEach(function (mm) {
-      if (mm.start > last) addTextNode(container, text.slice(last, mm.start));
-      if (mm.type === 'img') {
-        var img = document.createElement('img');
-        img.src = mm.val; img.alt = '图片';
-        container.appendChild(img);
-      } else {
-        appendLinkNode(container, mm.val);
-      }
-      last = mm.end;
+    // 代码块 <pre class="cb" data-lang> → 高亮 + 复制组件
+    Array.prototype.slice.call(tmp.querySelectorAll('pre')).forEach(function (pre) {
+      var lang = pre.getAttribute('data-lang') || 'c';
+      var code = pre.textContent || '';
+      var holder = document.createElement('div');
+      appendCodeBlock(holder, lang, code);
+      pre.parentNode.replaceChild(holder.firstChild, pre);
     });
-    if (last < text.length) addTextNode(container, text.slice(last));
-  }
 
-  function addTextNode(container, txt) {
-    var span = document.createElement('span');
-    span.className = 'detail-text';
-    span.textContent = txt;
-    container.appendChild(span);
+    // 双链 <span data-link="标题"> → 可点击跳转
+    Array.prototype.slice.call(tmp.querySelectorAll('span[data-link]')).forEach(function (sp) {
+      var t = sp.getAttribute('data-link') || '';
+      var holder = document.createElement('span');
+      appendLinkNode(holder, t);
+      sp.parentNode.replaceChild(holder.firstChild, sp);
+    });
+
+    while (tmp.firstChild) container.appendChild(tmp.firstChild);
   }
 
   /** 内联双链：存在则点击跳转，不存在则灰色显示 */
@@ -1912,17 +1891,16 @@
   function openCodeModal() { $('codeModal').hidden = false; }
   function closeCodeModal() { $('codeModal').hidden = true; }
 
-  /** 在光标处插入代码块 token */
+  /** 在光标处插入代码块（<pre class="cb" data-lang> 节点，可直接编辑） */
   function insertCodeBlock(lang) {
     var tpl = CODE_TEMPLATES[lang] || '';
-    var token = '\n[code:' + lang + ']\n' + tpl + '[/code]\n';
     var bodyEl = $('editBody');
-    var pos = bodyEl.selectionStart != null ? bodyEl.selectionStart : bodyEl.value.length;
-    var v = bodyEl.value;
-    bodyEl.value = v.slice(0, pos) + token + v.slice(pos);
-    var np = pos + token.length;
-    bodyEl.setSelectionRange(np, np);
-    bodyEl.focus();
+    var pre = document.createElement('pre');
+    pre.className = 'cb';
+    pre.setAttribute('data-lang', lang);
+    pre.textContent = tpl;
+    RT.insertNodeAtCursor(bodyEl, pre);
+    RT.insertNodeAtCursor(bodyEl, document.createElement('br'));
     closeCodeModal();
     showSnack('已插入代码块');
   }
@@ -1983,17 +1961,9 @@
   var recognition = null;
   var voiceRecording = false;
 
-  /** 在正文光标处插入文本（自动在词间补空格） */
+  /** 在正文光标处插入文本（语音输入等） */
   function insertTextAtCursor(text) {
-    var bodyEl = $('editBody');
-    var pos = bodyEl.selectionStart != null ? bodyEl.selectionStart : bodyEl.value.length;
-    var v = bodyEl.value;
-    var needSpace = pos > 0 && !/\s/.test(v.charAt(pos - 1));
-    var ins = (needSpace ? ' ' : '') + text;
-    bodyEl.value = v.slice(0, pos) + ins + v.slice(pos);
-    var np = pos + ins.length;
-    bodyEl.setSelectionRange(np, np);
-    bodyEl.focus();
+    RT.insertTextAtCursor($('editBody'), text);
   }
 
   function updateMicButton(on) {
@@ -2144,7 +2114,7 @@
 
   // ============ 串口日志智能解析（半屏底部面板） ============
   function openLogSheet(note) {
-    var result = window.LogParser.classify(note.body || '');
+    var result = window.LogParser.classify(RT.toPlainText(note.body || ''));
     var lines = logLines;
     lines.innerHTML = '';
 
@@ -2217,12 +2187,8 @@
     reviewType.innerHTML = ti.icon + ' ' + ti.label;
     reviewTitle.textContent = note.title || '（无标题）';
 
-    // 正文前 300 字（去除图片/代码 token）
-    var text = (note.body || '')
-      .replace(Store.IMG_TOKEN_RE, '')
-      .replace(Store.CODE_TOKEN_RE, '')
-      .replace(/\s+/g, ' ')
-      .trim();
+    // 正文前 300 字（纯文本）
+    var text = RT.toPlainText(note.body || '').replace(/\s+/g, ' ').trim();
     if (text.length > 300) text = text.slice(0, 300) + '…';
     reviewBodyText.textContent = text || '（无正文）';
 
@@ -2444,6 +2410,39 @@
     });
     // 语音输入
     btnMic.addEventListener('click', toggleVoice);
+
+    // 富文本格式工具栏（加粗/斜体/下划线/高亮/字号/清除格式）
+    var fmtToolbar = $('fmtToolbar');
+    if (fmtToolbar) {
+      Array.prototype.forEach.call(fmtToolbar.querySelectorAll('.fmt-btn'), function (b) {
+        // mousedown 阻止默认，避免编辑器失焦丢失选区
+        b.addEventListener('mousedown', function (e) { e.preventDefault(); });
+        b.addEventListener('click', function () {
+          var editor = $('editBody');
+          editor.focus();
+          if (b.dataset.cmd) RT.exec(b.dataset.cmd);
+          else if (b.dataset.hl) RT.exec('hiliteColor', b.dataset.hl);
+        });
+      });
+      var fmtFontSize = $('fmtFontSize');
+      if (fmtFontSize) {
+        fmtFontSize.addEventListener('change', function () {
+          if (!fmtFontSize.value) return;
+          $('editBody').focus();
+          RT.exec('fontSize', fmtFontSize.value);
+          fmtFontSize.value = '';
+        });
+      }
+      // 编辑器内快捷键：Ctrl+B / Ctrl+I / Ctrl+U 浏览器原生已支持 contenteditable
+      // 粘贴时清洗（延迟到粘贴完成后统一 sanitize）
+      $('editBody').addEventListener('paste', function () {
+        var editor = $('editBody');
+        setTimeout(function () {
+          var cleaned = RT.sanitize(editor.innerHTML);
+          if (cleaned !== editor.innerHTML) editor.innerHTML = cleaned;
+        }, 0);
+      });
+    }
     // 引脚速查
     pinInput.addEventListener('input', function () {
       state.pinSearch = pinInput.value.trim();
