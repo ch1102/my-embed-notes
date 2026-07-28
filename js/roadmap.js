@@ -73,6 +73,12 @@
     writeAll(all);
   }
 
+  /** 取得全部路线进度对象（同步用） */
+  function getAll() { return readAll(); }
+
+  /** 批量覆盖写入全部路线进度（同步模块合并后调用） */
+  function replaceAll(obj) { writeAll(obj && typeof obj === 'object' ? obj : {}); }
+
   /** 切换某节点完成状态，返回最新数组 */
   function toggle(name, idx) {
     var arr = getProgress(name);
@@ -100,6 +106,8 @@
     DEFAULT_ROUTE: DEFAULT_ROUTE,
     getProgress: getProgress,
     setProgress: setProgress,
+    getAll: getAll,
+    replaceAll: replaceAll,
     toggle: toggle,
     progressInfo: progressInfo
   };

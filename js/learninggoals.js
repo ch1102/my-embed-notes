@@ -52,6 +52,9 @@
   }
 
   function getAll() { return read(); }
+
+  /** 批量覆盖写入（由同步模块在合并后调用，write 会保留此模块既有字段） */
+  function replaceAll(list) { write(Array.isArray(list) ? list : []); }
   function getById(id) {
     var list = read();
     for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
@@ -87,6 +90,7 @@
       desc: (data.desc || '').trim(),
       status: 'active',
       createdAt: Date.now(),
+      updatedAt: Date.now(),
       doneDate: ''
     };
     list.push(goal);
@@ -106,6 +110,7 @@
     goal.name = name;
     goal.due = due;
     goal.desc = (data.desc || '').trim();
+    goal.updatedAt = Date.now();
     list[idx] = goal;
     write(list);
     return goal;
@@ -118,6 +123,7 @@
       if (list[i].id === id) {
         list[i].status = 'done';
         list[i].doneDate = fmtYMD(Date.now());
+        list[i].updatedAt = Date.now();
         write(list);
         return list[i];
       }
@@ -156,6 +162,7 @@
     STORAGE: STORAGE,
     daysLeft: daysLeft,
     getAll: getAll,
+    replaceAll: replaceAll,
     getById: getById,
     getActive: getActive,
     getDone: getDone,

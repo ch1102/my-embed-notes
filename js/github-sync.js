@@ -146,13 +146,64 @@
   }
 
   // ---------- 数据解析 / 合并 ----------
-  function parseNotes(text) {
+  /**
+   * 解析远端文件内容，统一返回 { notes, goals, roadmap }。
+   * 旧版只含 notes 数组的文件也能兼容（goals/roadmap 回退为空）。
+   */
+  function parsePayload(text) {
     try {
       var obj = JSON.parse(text);
-      if (obj && Array.isArray(obj.notes)) return obj.notes;
-      if (Array.isArray(obj)) return obj; // 兼容直接是数组
+      if (obj && typeof obj === 'object') {
+        return {
+          notes: Array.isArray(obj.notes) ? obj.notes : (Array.isArray(obj) ? obj : []),
+          goals: Array.isArray(obj.goals) ? obj.goals : [],
+          roadmap: (obj.roadmap && typeof obj.roadmap === 'object') ? obj.roadmap : null
+        };
+      }
     } catch (e) {}
-    return [];
+    return { notes: [], goals: [], roadmap: null };
+  }
+
+  function parseNotes(text) {
+    return parsePayload(text).notes;
+  }
+
+  /** 学习目标按 id 合并：任一端存在即保留；都存在时 updatedAt 较新者胜（相等取远端） */
+  function mergeGoals(local, remote) {
+    var map = {};
+    (local || []).forEach(function (g) { if (g && g.id) map[g.id] = g; });
+    (remote || []).forEach(function (g) {
+      if (!g || !g.id) return;
+      var cur = map[g.id];
+      if (!cur) { map[g.id] = g; return; }
+      var lu = cur.updatedAt || 0, ru = g.updatedAt || 0;
+      if (ru >= lu) map[g.id] = g;
+    });
+    return Object.keys(map).map(function (k) { return map[k]; });
+  }
+
+  /** 路线图进度按路线合并：同一节点在任一端为“已完成”则记为完成（OR 合并，避免进度丢失） */
+  function mergeRoadmap(local, remote) {
+    local = local || {}; remote = remote || {};
+    var out = JSON.parse(JSON.stringify(local));
+    Object.keys(remote).forEach(function (route) {
+      var ra = remote[route];
+      if (!Array.isArray(ra)) return;
+      if (!Array.isArray(out[route])) { out[route] = ra.slice(); return; }
+      var la = out[route];
+      for (var i = 0; i < ra.length; i++) if (ra[i]) la[i] = true;
+    });
+    return out;
+  }
+
+  /** 把远端 payload 里的 goals/roadmap 合并写回本地（若存在对应模块） */
+  function restoreExtras(obj) {
+    if (global.LearningGoals && Array.isArray(obj.goals)) {
+      global.LearningGoals.replaceAll(mergeGoals(global.LearningGoals.getAll(), obj.goals));
+    }
+    if (global.Roadmap && obj.roadmap && typeof obj.roadmap === 'object') {
+      global.Roadmap.replaceAll(mergeRoadmap(global.Roadmap.getAll(), obj.roadmap));
+    }
   }
 
   // 按 id 合并：远端有而本地无 → 取远端；都有 → updatedAt 较新者胜
@@ -192,11 +243,14 @@
   function pull() {
     return getFileRaw().then(function (f) {
       state.sha = f.sha;
-      var remoteNotes = parseNotes(f.content);
-      var merged = mergeNotes(global.NoteStore.getAll(), remoteNotes);
+      var obj = parsePayload(f.content);
+      var merged = mergeNotes(global.NoteStore.getAll(), obj.notes);
       global.NoteStore.replaceAll(merged);
+      // 同步学习目标与路线图进度（跨设备不丢失）
+      restoreExtras(obj);
       writeStatus({ lastSynced: Date.now(), lastError: null });
       emitStatus();
+      if (handlers.onAfterSync) try { handlers.onAfterSync(); } catch (e) {}
       return merged;
     }, function (err) {
       if (err && err.status === 404) {
@@ -214,7 +268,13 @@
 
   function push() {
     var notes = global.NoteStore.getAll();
-    var payload = JSON.stringify({ version: 1, syncedAt: Date.now(), notes: notes });
+    var payload = JSON.stringify({
+      version: 1,
+      syncedAt: Date.now(),
+      notes: notes,
+      goals: (global.LearningGoals ? global.LearningGoals.getAll() : []),
+      roadmap: (global.Roadmap ? global.Roadmap.getAll() : {})
+    });
     var content = b64encode(payload);
 
     // 没有 sha 时，先取一次远端（顺便把远端独有笔记合并进来，避免覆盖丢失）
@@ -225,9 +285,10 @@
 
     return getSha.then(function (info) {
       if (info.content != null) {
-        var remoteNotes = parseNotes(info.content);
-        var merged = mergeNotes(notes, remoteNotes);
+        var obj = parsePayload(info.content);
+        var merged = mergeNotes(notes, obj.notes);
         if (merged.length !== notes.length) global.NoteStore.replaceAll(merged);
+        restoreExtras(obj);
       }
       return putFile(content, info.sha, 'sync notes ' + new Date().toISOString());
     }).then(function (newSha) {
@@ -326,6 +387,9 @@
     getStatus: getStatus,
     // 暴露给测试
     _mergeNotes: mergeNotes,
+    _mergeGoals: mergeGoals,
+    _mergeRoadmap: mergeRoadmap,
+    _parsePayload: parsePayload,
     _b64encode: b64encode,
     _b64decode: b64decode,
     _parseNotes: parseNotes

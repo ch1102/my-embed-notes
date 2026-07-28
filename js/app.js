@@ -915,6 +915,7 @@
     renderGoalsPanel();
     refreshGoalBanner();
     if (statGoals) statGoals.textContent = window.LearningGoals.getDoneCount();
+    if (window.GitHubSync) window.GitHubSync.onLocalChange(); // 改动后自动推送（含学习目标）
   }
 
   /** 标记完成 */
@@ -925,6 +926,7 @@
     renderGoalsPanel();
     refreshGoalBanner();
     if (statGoals) statGoals.textContent = window.LearningGoals.getDoneCount();
+    if (window.GitHubSync) window.GitHubSync.onLocalChange();
   }
 
   /** 删除目标（解除关联笔记） */
@@ -938,6 +940,7 @@
     renderGoalsPanel();
     refreshGoalBanner();
     if (statGoals) statGoals.textContent = window.LearningGoals.getDoneCount();
+    if (window.GitHubSync) window.GitHubSync.onLocalChange();
   }
 
   // ============ 技能雷达图 ============
@@ -1233,6 +1236,7 @@
   function toggleRoadmapNode(route, idx) {
     window.Roadmap.toggle(route, idx);
     renderRoadmap();
+    if (window.GitHubSync) window.GitHubSync.onLocalChange();
   }
 
   /** 项目墙：卡片网格展示所有项目（名称 / 主控 / 状态标签） */
@@ -2644,7 +2648,8 @@
       window.GitHubSync.setHandlers({
         onStatus: function () { if (syncStatus) refreshSyncStatus(); },
         onError: function (msg) { showSnack(msg); },
-        onSyncStart: function () {}
+        onSyncStart: function () {},
+        onAfterSync: function () { if (typeof renderHome === 'function') renderHome(); }
       });
       // 启动拉取（静默：失败只记状态，不打扰）；拉取完成后刷新列表
       window.GitHubSync.initPull(function () { renderHome(); });
