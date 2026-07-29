@@ -25,6 +25,8 @@ var cloudNotes = {};
 var cloudExtras = null;
 // 标记某个 note 是否应触发 "too large" 错误
 var tooLargeNotes = {}; // id -> true
+// 标记某个 note 是否在 Contents API 返回"非 too-large 的其它错误"（如 500/网络抖动/opaque）
+var genericFailNotes = {}; // id -> true
 
 var callLog = [];
 
@@ -50,6 +52,10 @@ global.fetch = function (url, opts) {
     var name = noteName(id);
     if (tooLargeNotes[id]) {
       return Promise.resolve({ ok: false, status: 403, json: function () { return Promise.resolve({ message: 'This API returns blobs up to 1 MB in size. The requested blob is too large to fetch via the API.' }); } });
+    }
+    if (genericFailNotes[id]) {
+      // 模拟"非 too-large 的其它读取失败"（如限流/网络抖动/opaque 错误）—— 这正是之前暴露成 "HTTP ?" 的路径
+      return Promise.resolve({ ok: false, status: 500, json: function () { return Promise.resolve({ message: 'internal error' }); } });
     }
     if (!cloudNotes[name]) return Promise.resolve({ ok: false, status: 404, json: function () { return Promise.resolve({ message: 'Not Found' }); } });
     return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve({ content: cloudNotes[name].contentB64, sha: cloudNotes[name].sha }); } });
@@ -83,8 +89,11 @@ global.fetch = function (url, opts) {
     return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve({ object: { sha: 'commitSHA' } }); } });
   }
   if (u.match(/\/git\/trees\//)) {
-    // tree 中包含大文件 n1 的条目，供 findInTree 定位
-    return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve({ sha: 'treeSHA', tree: [{ path: 'data/notes/n1.json', mode: '100644', type: 'blob', sha: 'blobShaN1' }] }); } });
+    // tree 中包含 n1 与 n_fail 的条目，供 findInTree 定位
+    return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve({ sha: 'treeSHA', tree: [
+      { path: 'data/notes/n1.json', mode: '100644', type: 'blob', sha: 'blobShaN1' },
+      { path: 'data/notes/n_fail.json', mode: '100644', type: 'blob', sha: 'blobShaNfail' }
+    ] }); } });
   }
   if (u.match(/\/git\/blobs$/) && method === 'POST') {
     return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve({ sha: 'blobSHA' }); } });
@@ -103,6 +112,9 @@ global.fetch = function (url, opts) {
     var blobSha = u.split('/git/blobs/')[1];
     if (blobSha === 'blobShaN1' && cloudNotes['n1.json']) {
       return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve({ content: cloudNotes['n1.json'].contentB64, encoding: 'base64' }); } });
+    }
+    if (blobSha === 'blobShaNfail' && cloudNotes['n_fail.json']) {
+      return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve({ content: cloudNotes['n_fail.json'].contentB64, encoding: 'base64' }); } });
     }
     return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve({ content: enc(tooLargeContent), encoding: 'base64' }); } });
   }
@@ -191,6 +203,24 @@ var tooLargeContent = JSON.stringify({ id: 'big', title: 'big note', body: 'x', 
     var usedGit = callLog.some(function (c) { return c.url.indexOf('/git/') !== -1; });
     ok(usedGit, '应触发 Git Data API 调用');
     console.log('测试5 通过：>1MB 单文件 Git Data API 回退');
+  });
+})
+
+// 测试 6：某篇笔记在 Contents API 返回"非 too-large 的其它错误"（如 500/网络抖动/opaque）
+//        也必须通过 Git Data API 回退读回 —— 这正是之前暴露成 "HTTP ?" 失败告警的路径
+.then(function () {
+  tooLargeNotes = {};
+  genericFailNotes = { n_fail: true };
+  cloudNotes = {
+    'n_fail.json': { contentB64: enc(JSON.stringify({ id: 'n_fail', title: 'Contents读取出错但GitData可读', updatedAt: 500 })), sha: 'sfail' }
+  };
+  store._notes = [];
+  callLog = [];
+  return G.forcePull().then(function (remote) {
+    ok(remote.length === 1 && remote[0].id === 'n_fail', 'Contents 读取失败的笔记应通过 Git Data 回退读取成功（不应再丢）');
+    var usedGit = callLog.some(function (c) { return c.url.indexOf('/git/') !== -1; });
+    ok(usedGit, '应触发 Git Data API 调用作为回退');
+    console.log('测试6 通过：非 too-large 的读取失败也走 Git Data 回退（修复原 HTTP ? 告警）');
   });
 })
 

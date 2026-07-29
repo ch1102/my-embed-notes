@@ -133,9 +133,26 @@
   }
   function getBlobContent(blobSha) {
     return ghGet(apiBase() + '/git/blobs/' + blobSha).then(function (d) {
-      if (d.encoding === 'base64') return b64decode(d.content);
+      if (d.encoding === 'base64') return b64decodeChunked(d.content);
       if (d.encoding === 'utf-8') return d.content;
       throw httpError(500, '未知 blob 编码: ' + d.encoding);
+    });
+  }
+  // 分块 base64 解码：避免超大字符串在部分浏览器 atob 下报错/截断
+  function b64decodeChunked(b64) {
+    var clean = (b64 || '').replace(/\s/g, '');
+    var bin = '', chunk = 0x8000, i;
+    for (i = 0; i < clean.length; i += chunk) bin += atob(clean.substring(i, i + chunk));
+    var bytes = new Uint8Array(bin.length);
+    for (i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new TextDecoder().decode(bytes);
+  }
+  // 瞬时错误重试（限流/网络抖动）：err 无 status 视为网络错误，可重试
+  function withRetry(promiseFn, retries, isRetryable) {
+    return promiseFn().catch(function (err) {
+      if (retries <= 0) throw err;
+      if (isRetryable && !isRetryable(err)) throw err;
+      return withRetry(promiseFn, retries - 1, isRetryable);
     });
   }
   function writeLargeFile(path, b64content, message) {
@@ -168,15 +185,22 @@
     // 通过 Git Data API 读取大文件（>1MB，Contents API 读不了）：
     // ref → tree(recursive) → 找到该路径的 blob sha → 取 blob 内容
     var c = getConfig(), branch = c.branch || DEFAULT_BRANCH;
-    return getRefSha(branch).then(function (commitSha) {
-      return getTree(commitSha);
-    }).then(function (tree) {
-      var entry = findInTree(tree, path);
-      if (!entry) throw httpError(404, 'Git Data: 未找到文件 ' + path);
-      if (entry.type !== 'blob') throw httpError(500, 'Git Data: 路径不是文件 ' + path);
-      return getBlobContent(entry.sha).then(function (content) {
-        return { content: content, sha: entry.sha };
+    function attempt() {
+      return getRefSha(branch).then(function (commitSha) {
+        return getTree(commitSha);
+      }).then(function (tree) {
+        var entry = findInTree(tree, path);
+        if (!entry) throw httpError(404, 'Git Data: 未找到文件 ' + path);
+        if (entry.type !== 'blob') throw httpError(500, 'Git Data: 路径不是文件 ' + path);
+        return getBlobContent(entry.sha).then(function (content) {
+          return { content: content, sha: entry.sha };
+        });
       });
+    }
+    // 限流(403/429)或网络错误(无 status)自动重试一次
+    return withRetry(attempt, 2, function (err) {
+      var s = err && err.status;
+      return s === 403 || s === 429 || !s;
     });
   }
   function ghGet(url) {
@@ -202,6 +226,8 @@
   }
 
   // ---------- 统一文件读写（小文件 Contents API / 大文件 Git Data API）----------
+  // 任意非 404 的读取失败（文件过大 / 限流 / 网络抖动 / opaque 错误）都回退到 Git Data API，
+  // 因为 Git Data 支持最大 100MB 且对大文件更稳定。
   function readRemoteFile(path) {
     return fetch(contentsUrlFor(path), { method: 'GET', headers: ghHeaders() }).then(function (r) {
       if (r.status === 404) throw httpError(404, 'not found');
@@ -214,13 +240,14 @@
       }
       return r.json();
     }).then(function (data) {
-      // ========== 新增修复：检查 content 是否为 null 或 message 包含 too large ==========
       if (!data.content || (data.message && data.message.toLowerCase().indexOf('too large') !== -1)) {
         throw { _useGitData: true, path: path };
       }
       return { content: b64decode(data.content), sha: data.sha };
-    }, function (err) {
+    }).catch(function (err) {
       if (err && err._useGitData) return getFileRawGitData(path);
+      // 文件过大、限流、网络错误等任何非 404 失败 → 都尝试 Git Data 回退
+      if (err && err.status && err.status !== 404) return getFileRawGitData(path);
       throw err;
     });
   }
@@ -547,7 +574,8 @@
     if (err.status === 404) return '仓库或数据文件不存在（确认 owner/repo 与路径）';
     if (err.status === 409) return '远端冲突，正在重试';
     if (err.message) return err.message;
-    return 'HTTP ' + (err.status || '?');
+    if (err.name) return err.name;
+    return '同步错误(HTTP ' + (err.status != null ? err.status : '未知') + ')';
   }
 
   function setHandlers(h) { handlers = h || {}; }
