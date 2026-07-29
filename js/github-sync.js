@@ -165,13 +165,21 @@
     });
   }
   function getFileRawGitData(path) {
-    var branch = (getConfig().branch || DEFAULT_BRANCH);
-    return getRefSha(branch).then(function (commitSha) {
-      return getTree(commitSha).then(function (treeData) {
-        var entry = findInTree(treeData, path);
-        if (!entry || entry.type !== 'blob') throw httpError(404, '远端文件不存在');
-        return getBlobContent(entry.sha).then(function (content) { return { content: content, sha: commitSha }; });
-      });
+    // 先获取该文件的目录条目以得到 git_url
+    return fetch(contentsUrlFor(path), { method: 'GET', headers: ghHeaders() }).then(function (r) {
+      if (!r.ok) throw httpError(r.status, 'Failed to get file info');
+      return r.json();
+    }).then(function (info) {
+      if (!info.git_url) throw httpError(404, 'No git_url found');
+      return fetch(info.git_url, { method: 'GET', headers: ghHeaders() });
+    }).then(function (r) {
+      if (!r.ok) throw httpError(r.status, 'Failed to fetch blob');
+      return r.json();
+    }).then(function (blob) {
+      if (blob.encoding === 'base64') {
+        return { content: b64decode(blob.content), sha: blob.sha };
+      }
+      throw httpError(500, 'Unsupported encoding: ' + blob.encoding);
     });
   }
   function ghGet(url) {
