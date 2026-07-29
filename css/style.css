@@ -384,7 +384,7 @@ svg { width: 24px; height: 24px; fill: currentColor; }
 .code-block pre { margin: 0; padding: 12px 14px; overflow-x: auto; }
 .code-block code {
   font-family: "SF Mono", Consolas, "Courier New", monospace;
-  font-size: 13px; line-height: 1.55; color: #d4d4d4; white-space: pre;
+  font-size: 13px; line-height: 1.55; color: #d4d4d4; white-space: pre-wrap; word-break: break-word;
 }
 /* 语法高亮配色（类 VS Code Dark+） */
 .hl-comment { color: #6a9955; font-style: italic; }
