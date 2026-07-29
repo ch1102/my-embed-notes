@@ -244,11 +244,12 @@
     return getFileRaw().then(function (f) {
       state.sha = f.sha;
       var obj = parsePayload(f.content);
-      var merged = mergeNotes(global.NoteStore.getAll(), obj.notes);
+      var remoteNotes = Array.isArray(obj.notes) ? obj.notes : [];
+      var merged = mergeNotes(global.NoteStore.getAll(), remoteNotes);
       global.NoteStore.replaceAll(merged);
       // 同步学习目标与路线图进度（跨设备不丢失）
       restoreExtras(obj);
-      writeStatus({ lastSynced: Date.now(), lastError: null });
+      writeStatus({ lastSynced: Date.now(), lastError: null, lastPullRemote: remoteNotes.length, lastPullLocal: merged.length });
       emitStatus();
       if (handlers.onAfterSync) try { handlers.onAfterSync(); } catch (e) {}
       return merged;
@@ -274,12 +275,21 @@
     return getFileRaw().then(function (f) {
       state.sha = f.sha;
       var obj = parsePayload(f.content);
-      global.NoteStore.replaceAll(obj.notes.slice());
+      var remoteNotes = Array.isArray(obj.notes) ? obj.notes : [];
+      var localCount = global.NoteStore.getAll().length;
+      // 安全护栏：云端为空但本机有数据 → 不覆盖，避免「清空本机」式灾难
+      if (remoteNotes.length === 0 && localCount > 0) {
+        var msg = '云端为空(0 条)，已保留本机 ' + localCount + ' 条，未执行覆盖';
+        writeStatus({ lastSynced: Date.now(), lastError: msg, lastPullRemote: 0, lastPullLocal: localCount });
+        emitStatus();
+        return global.NoteStore.getAll();
+      }
+      global.NoteStore.replaceAll(remoteNotes.slice());
       restoreExtras(obj);
-      writeStatus({ lastSynced: Date.now(), lastError: null });
+      writeStatus({ lastSynced: Date.now(), lastError: null, lastPullRemote: remoteNotes.length, lastPullLocal: remoteNotes.length });
       emitStatus();
       if (handlers.onAfterSync) try { handlers.onAfterSync(); } catch (e) {}
-      return obj.notes;
+      return remoteNotes;
     }, function (err) {
       writeStatus({ lastError: errMsg(err) });
       emitStatus();

@@ -2766,6 +2766,7 @@
       txt = '已配置仓库：' + window.GitHubSync.repoSlug();
       if (s.lastSynced) txt += '　·　上次同步：' + fmtTime(s.lastSynced);
       if (s.pending) txt += '　·　有改动待同步';
+      if (s.lastPullRemote != null) txt += '　·　云端 ' + s.lastPullRemote + ' 条 / 本地 ' + s.lastPullLocal + ' 条';
       if (s.lastError) txt += '　·　⚠ ' + s.lastError;
     }
     syncStatus.textContent = txt;
