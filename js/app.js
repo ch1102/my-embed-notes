@@ -1854,14 +1854,42 @@
     head.appendChild(langLabel);
     head.appendChild(copyBtn);
 
+    var displayCode = normalizeCodeFormat(code, lang);
     var pre = document.createElement('pre');
     var codeEl = document.createElement('code');
-    codeEl.innerHTML = highlight(code, lang);
+    codeEl.innerHTML = highlight(displayCode, lang);
     pre.appendChild(codeEl);
 
     wrap.appendChild(head);
     wrap.appendChild(pre);
     container.appendChild(wrap);
+  }
+
+  /**
+   * 代码格式恢复：检测因 contenteditable 编辑导致换行丢失的 C/ASM 代码，
+   * 在安全的断点位置补回换行符。仅当换行率异常低时才触发，避免误伤正常单行代码。
+   */
+  function normalizeCodeFormat(code, lang) {
+    if (!code) return code;
+    // 仅对 C 系语言处理
+    if (!/^(c|cpp|h|asm|js|ts|java)$/i.test(lang)) return code;
+    var semiCount = (code.match(/;/g) || []).length;
+    var lineCount = code.split('\n').length;
+    // 每个分号平均对应 < 0.4 行 → 换行严重丢失，触发修复
+    if (semiCount > 3 && lineCount < semiCount * 0.4 + 2) {
+      return code
+        // # 预处理指令之间补换行
+        .replace(/([^\n])(#(include|define|ifdef|ifndef|if|endif|else|pragma))/g, '$1\n$2')
+        // } 后紧跟非空白字符（下一个声明/定义）→ 补换行
+        .replace(/\}(\S)/g, '}\n$1')
+        // ; 后紧跟非 );}\] 字符 → 补换行（排除 for/if/while 的 )）
+        .replace(/;\s*(?=[^)\s}\]])/g, ';\n')
+        // { 后紧跟非换行字符 → 补换行
+        .replace(/\{(\S)/g, '{\n$1')
+        // 压缩多余空行
+        .replace(/\n{3,}/g, '\n\n');
+    }
+    return code;
   }
 
   function langLabelText(lang) {
