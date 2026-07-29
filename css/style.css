@@ -446,9 +446,15 @@ svg { width: 24px; height: 24px; fill: currentColor; }
 
 /* 硬件笔记卡片差异化 */
 .note-card--hardware { border-left: 4px solid #C77700; }
-.note-card--hardware .note-card__inner { background: linear-gradient(90deg, rgba(199,119,0,.07), transparent 40%); }
+.note-card--hardware .note-card__inner {
+  background-color: var(--surface);
+  background-image: linear-gradient(90deg, rgba(199,119,0,.07), transparent 40%);
+}
 @media (prefers-color-scheme: dark) {
-  .note-card--hardware .note-card__inner { background: linear-gradient(90deg, rgba(199,119,0,.18), transparent 40%); }
+  .note-card--hardware .note-card__inner {
+    background-color: var(--surface);
+    background-image: linear-gradient(90deg, rgba(199,119,0,.18), transparent 40%);
+  }
 }
 .hw-badge {
   display: inline-flex; align-items: center; gap: 3px;
