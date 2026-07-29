@@ -288,35 +288,48 @@
   }
 
   function push() {
-    var notes = global.NoteStore.getAll();
-    var payload = JSON.stringify({
-      version: 1,
-      syncedAt: Date.now(),
-      notes: notes,
-      goals: (global.LearningGoals ? global.LearningGoals.getAll() : []),
-      roadmap: (global.Roadmap ? global.Roadmap.getAll() : {})
+    if (!isConfigured()) return Promise.reject(httpError(400, '未配置同步'));
+
+    // 关键修复：推送前始终先取远端最新内容，把云端数据合并进本地后，
+    // 用「合并后的结果」作为上传内容。这样无论本地是否落后（设备离线 / 自动推送抢在
+    // 启动拉取之前），都不会用陈旧本地数据整文件覆盖云端，从而避免丢失另一设备的新内容。
+    var getRemote = getFileRaw().catch(function (err) {
+      if (err && err.status === 404) return { sha: null, content: null }; // 远端尚无数据文件
+      throw err; // 401/403 等：不盲目上传
     });
-    var content = b64encode(payload);
 
-    // 没有 sha 时，先取一次远端（顺便把远端独有笔记合并进来，避免覆盖丢失）
-    var getSha = state.sha ? Promise.resolve({ sha: state.sha, content: null }) : getFileRaw().then(
-      function (f) { return { sha: f.sha, content: f.content }; },
-      function (err) { if (err && err.status === 404) return { sha: null, content: null }; throw err; }
-    );
+    return getRemote.then(function (remote) {
+      var remoteObj = (remote.content != null) ? parsePayload(remote.content) : null;
 
-    return getSha.then(function (info) {
-      if (info.content != null) {
-        var obj = parsePayload(info.content);
-        var merged = mergeNotes(notes, obj.notes);
-        if (merged.length !== notes.length) global.NoteStore.replaceAll(merged);
-        restoreExtras(obj);
-      }
-      return putFile(content, info.sha, 'sync notes ' + new Date().toISOString());
-    }).then(function (newSha) {
-      state.sha = newSha;
-      state.pending = false;
-      writeStatus({ lastSynced: Date.now(), lastError: null });
-      emitStatus();
+      var localNotes = global.NoteStore.getAll();
+      var localGoals = global.LearningGoals ? global.LearningGoals.getAll() : [];
+      var localRoadmap = global.Roadmap ? global.Roadmap.getAll() : {};
+
+      // 合并：远端 + 本地（笔记按 id、updatedAt 较新者胜；目标/路线图按既有合并规则）
+      var mergedNotes = remoteObj ? mergeNotes(localNotes, remoteObj.notes) : localNotes.slice();
+      var mergedGoals = remoteObj ? mergeGoals(localGoals, remoteObj.goals) : localGoals.slice();
+      var mergedRoadmap = remoteObj ? mergeRoadmap(localRoadmap, remoteObj.roadmap) : localRoadmap;
+
+      // 写回本地，保证本地与「即将上传的内容」一致（下次启动拉取也能拿到合并结果）
+      global.NoteStore.replaceAll(mergedNotes);
+      if (global.LearningGoals) global.LearningGoals.replaceAll(mergedGoals);
+      if (global.Roadmap) global.Roadmap.replaceAll(mergedRoadmap);
+
+      var payload = JSON.stringify({
+        version: 1,
+        syncedAt: Date.now(),
+        notes: mergedNotes,
+        goals: mergedGoals,
+        roadmap: mergedRoadmap
+      });
+      var content = b64encode(payload);
+
+      return putFile(content, remote.sha, 'sync notes ' + new Date().toISOString()).then(function (newSha) {
+        state.sha = newSha;
+        state.pending = false;
+        writeStatus({ lastSynced: Date.now(), lastError: null });
+        emitStatus();
+      });
     });
   }
 
