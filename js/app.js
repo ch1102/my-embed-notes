@@ -1650,8 +1650,6 @@
     time.textContent = relativeTime(note.updatedAt);
     meta.appendChild(time);
 
-    renderDetailBody($('detailBody'), note.body);
-
     // 串口日志解析按钮：仅当正文（纯文本）包含多行时显示
     if (RT.toPlainText(note.body || '').indexOf('\n') !== -1) {
       btnParseLog.hidden = false;
@@ -1664,6 +1662,8 @@
     renderHwSpec(note);
     renderBugSpec(note);
     renderProjSpec(note);
+
+    renderDetailBody($('detailBody'), note.body);
     renderDetailLinks(note);
 
     setView('detail');
