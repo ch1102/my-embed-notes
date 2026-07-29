@@ -1,14 +1,14 @@
 /**
- * github-sync.js —— 把 GitHub 当“云端后端”做笔记同步
+ * github-sync.js —— 把 GitHub 当"云端后端"做笔记同步
  *
  * 设计要点：
  *  - 全部笔记序列化为一个 JSON 文件（默认 data/notes.json）存进一个私有 GitHub 仓库，
- *    通过 GitHub Contents API（支持浏览器跨域）读写，无需自建服务器。
- *  - 认证用 Personal Access Token（PAT，需 repo 权限），仅存在浏览器 localStorage，
- *    不进仓库。建议用独立“私有仓库”存数据，避免笔记内容被公开访问。
- *  - 同步策略：启动时自动拉取（合并）；改动后防抖自动推送；也可手动“立即同步”。
+ *    通过 GitHub API（浏览器跨域）读写，无需自建服务器。
+ *  - 认证用 Personal Access Token（PAT，需 repo 权限），仅存在浏览器 localStorage。
+ *  - 双模式读写：小文件（≤1 MB）走 Contents API（快速）；大文件（>1 MB）自动切换到
+ *    Git Data API（blob/tree/commit/ref，支持最大 100 MB），对上层透明。
+ *  - 同步策略：启动时自动拉取（合并）；改动后标记待推送；手动拉取/推送。
  *  - 冲突处理：笔记按 id 合并，updatedAt 较新者胜（按笔记粒度，而非整文件覆盖）。
- *  - push 遇到 409（远端已被改动）会自动 re-pull 再 push 一次。
  */
 (function (global) {
   'use strict';
@@ -111,19 +111,171 @@
 
   function httpError(status, message) { return { status: status, message: message }; }
 
-  // 读取远端文件，返回 { content(string), sha }；404 时抛出 { status: 404 }
-  function getFileRaw() {
-    return fetch(contentsUrl(), { method: 'GET', headers: ghHeaders() }).then(function (r) {
-      if (r.status === 404) throw httpError(404, '远端数据文件不存在');
-      if (!r.ok) return r.json().then(function (j) { throw httpError(r.status, (j && j.message) || ('HTTP ' + r.status)); },
-        function () { throw httpError(r.status, 'HTTP ' + r.status); });
-      return r.json();
-    }).then(function (data) {
-      return { content: b64decode(data.content), sha: data.sha };
+  // ---------- Git Data API（大文件 >1 MB 时使用，支持最大 100 MB）----------
+
+  /** 获取分支最新 commit 的 SHA */
+  function getRefSha(branch) {
+    var url = apiBase() + '/git/ref/heads/' + encodeURIComponent(branch || DEFAULT_BRANCH);
+    return ghGet(url).then(function (d) { return d.object.sha; });
+  }
+
+  /** 获取 commit 对应的 tree（recursive=1 以找到深层路径） */
+  function getTree(commitSha) {
+    return ghGet(apiBase() + '/git/trees/' + commitSha + '?recursive=1');
+  }
+
+  /** 在 tree 中查找指定路径的条目，返回 { sha, mode, type } 或 null */
+  function findInTree(tree, path) {
+    if (!tree || !Array.isArray(tree.tree)) return null;
+    var target = (path || DEFAULT_PATH).replace(/^\//, '');
+    for (var i = 0; i < tree.tree.length; i++) {
+      if (tree.tree[i].path === target) return tree.tree[i];
+    }
+    return null;
+  }
+
+  /** 通过 Git Data API 读取 blob 内容（支持 >1 MB） */
+  function getBlobContent(blobSha) {
+    return ghGet(apiBase() + '/git/blobs/' + blobSha).then(function (d) {
+      if (d.encoding === 'base64') return b64decode(d.content);
+      if (d.encoding === 'utf-8') return d.content;
+      throw httpError(500, '未知 blob 编码: ' + d.encoding);
     });
   }
 
-  // 写入远端文件；sha 为 null 表示新建。返回新 sha。
+  /** 判断 GitHub 错误是否为"文件过大（>1MB）" */
+  function isTooLargeError(err) {
+    if (!err || !err.message) return false;
+    var msg = err.message;
+    return msg.indexOf('too large') !== -1 ||
+           msg.indexOf('1 MB') !== -1 ||
+           msg.indexOf('100 MB') !== -1 ||
+           msg.indexOf('blobs up to') !== -1;
+  }
+
+  /**
+   * 通过 Git Data API 写入大文件：
+   * 1. 创建 blob → 拿到 blobSha
+   * 2. 取当前 commit → 取当前 tree
+   * 3. 构建新 tree（替换目标路径的 blob）
+   * 4. 创建 commit
+   * 5. 更新 branch ref
+   */
+  function writeLargeFile(b64content, message) {
+    var c = getConfig();
+    var branch = c.branch || DEFAULT_BRANCH;
+    var filePath = c.path || DEFAULT_PATH;
+
+    // Step 1: 创建 blob
+    return ghPost(apiBase() + '/git/blobs', {
+      content: b64content,
+      encoding: 'base64'
+    }).then(function (blobData) {
+      var blobSha = blobData.sha;
+
+      // Step 2: 获取当前 commit SHA 和 tree
+      return getRefSha(branch).then(function (commitSha) {
+        return getTree(commitSha).then(function (treeData) {
+          var treeSha = treeData.sha;
+
+          // Step 3: 构建新 tree（复制所有条目，替换目标文件）
+          var entry = findInTree(treeData, filePath);
+          var newTree = [];
+          for (var i = 0; i < treeData.tree.length; i++) {
+            var item = treeData.tree[i];
+            if (item.path === filePath) {
+              newTree.push({ path: item.path, mode: item.mode || '100644', type: 'blob', sha: blobSha });
+            } else {
+              newTree.push({ path: item.path, mode: item.mode || (item.type === 'tree' ? '040000' : '100644'), type: item.type, sha: item.sha });
+            }
+          }
+          // 如果文件之前不存在（新建），追加到 tree
+          if (!entry) {
+            newTree.push({ path: filePath, mode: '100644', type: 'blob', sha: blobSha });
+          }
+
+          // Step 4: 创建新 tree
+          return ghPost(apiBase() + '/git/trees', { tree: newTree }).then(function (newTreeData) {
+            // Step 5: 创建 commit
+            return ghPost(apiBase() + '/git/commits', {
+              message: message || ('sync notes ' + new Date().toISOString()),
+              tree: newTreeData.sha,
+              parents: [commitSha]
+            }).then(function (commitData) {
+              // Step 6: 更新 branch ref
+              return ghPatch(apiBase() + '/git/refs/heads/' + encodeURIComponent(branch), {
+                sha: commitData.sha
+              }).then(function () {
+                return commitData.sha; // 返回新的 commit sha 作为"逻辑上的 sha"
+              });
+            });
+          });
+        });
+      });
+    });
+  }
+
+  /** 通过 Git Data API 读取远端文件（支持 >1 MB），返回 { content, sha(=commitSha) } */
+  function getFileRawGitData() {
+    var c = getConfig();
+    var branch = c.branch || DEFAULT_BRANCH;
+    return getRefSha(branch).then(function (commitSha) {
+      return getTree(commitSha).then(function (treeData) {
+        var entry = findInTree(treeData, c.path || DEFAULT_PATH);
+        if (!entry || entry.type !== 'blob') throw httpError(404, '远端数据文件不存在');
+        return getBlobContent(entry.sha).then(function (content) {
+          return { content: content, sha: commitSha }; // 用 commit sha 作为版本标识
+        });
+      });
+    });
+  }
+
+  // ---------- GitHub API 通用请求封装 ----------
+  function ghGet(url) {
+    return fetch(url, { method: 'GET', headers: ghHeaders() }).then(function (r) {
+      if (!r.ok) return r.json().then(function (j) { throw httpError(r.status, (j && j.message) || ('HTTP ' + r.status)); },
+        function () { throw httpError(r.status, 'HTTP ' + r.status); });
+      return r.json();
+    });
+  }
+  function ghPost(url, body) {
+    return fetch(url, { method: 'POST', headers: ghHeaders(), body: JSON.stringify(body) }).then(function (r) {
+      if (!r.ok) return r.json().then(function (j) { throw httpError(r.status, (j && j.message) || ('HTTP ' + r.status)); },
+        function () { throw httpError(r.status, 'HTTP ' + r.status); });
+      return r.json();
+    });
+  }
+  function ghPatch(url, body) {
+    return fetch(url, { method: 'PATCH', headers: ghHeaders(), body: JSON.stringify(body) }).then(function (r) {
+      if (!r.ok) return r.json().then(function (j) { throw httpError(r.status, (j && j.message) || ('HTTP ' + r.status)); },
+        function () { throw httpError(r.status, 'HTTP ' + r.status); });
+      return r.json();
+    });
+  }
+
+  // ---------- 读取远端文件（双模式：小文件 Contents API / 大文件 Git Data API）----------
+  // 返回 { content(string), sha }；404 时抛出 { status: 404 }
+  function getFileRaw() {
+    // 快速路径：先尝试 Contents API（对小文件最简单）
+    return fetch(contentsUrl(), { method: 'GET', headers: ghHeaders() }).then(function (r) {
+      if (r.status === 404) throw httpError(404, '远端数据文件不存在');
+      if (!r.ok) return r.json().then(function (j) {
+        var err = httpError(r.status, (j && j.message) || ('HTTP ' + r.status));
+        // 文件过大（>1 MB）→ 自动切换到 Git Data API
+        if (isTooLargeError(err)) throw { _useGitData: true, status: r.status, message: j.message };
+        throw err;
+      }, function () { throw httpError(r.status, 'HTTP ' + r.status); });
+      return r.json();
+    }).then(function (data) {
+      return { content: b64decode(data.content), sha: data.sha };
+    }, function (err) {
+      if (err && err._useGitData) return getFileRawGitData(); // 大文件：走 Git Data API
+      throw err;
+    });
+  }
+
+  // ---------- 写入远端文件（双模式）----------
+  // sha 为 null 表示新建。返回新 sha。
   function putFile(content, sha, message) {
     var body = {
       message: message || ('sync notes ' + new Date().toISOString()),
@@ -131,14 +283,22 @@
       branch: getConfig().branch || DEFAULT_BRANCH
     };
     if (sha) body.sha = sha;
+
+    // 先尝试 Contents API（快速路径）
     return fetch(contentsUrl(), {
       method: 'PUT',
       headers: ghHeaders(),
       body: JSON.stringify(body)
     }).then(function (r) {
       if (r.status === 409) throw { conflict: true, status: 409 };
-      if (!r.ok) return r.json().then(function (j) { throw httpError(r.status, (j && j.message) || ('HTTP ' + r.status)); },
-        function () { throw httpError(r.status, 'HTTP ' + r.status); });
+      if (!r.ok) return r.json().then(function (j) {
+        var errObj = httpError(r.status, (j && j.message) || ('HTTP ' + r.status));
+        // 文件过大（>1 MB）→ 切换 Git Data API 写入
+        if (isTooLargeError(errObj)) {
+          return writeLargeFile(content, message);
+        }
+        throw errObj;
+      }, function () { throw httpError(r.status, 'HTTP ' + r.status); });
       return r.json();
     }).then(function (data) {
       return data.content ? data.content.sha : sha;
