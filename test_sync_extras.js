@@ -10,16 +10,14 @@ function eq(actual, expected, msg) {
   else { fail++; console.log('✗ ' + msg + '\n  实际: ' + a + '\n  期望: ' + e); }
 }
 
-// ---- parsePayload ----
-var p = G._parsePayload('{"version":1,"notes":[{"id":"n1"}],"goals":[{"id":"g1","name":"A"}],"roadmap":{"STM32入门":[true,false]}}');
-eq(p.notes, [{id:'n1'}], 'parsePayload.notes');
-eq(p.goals, [{id:'g1',name:'A'}], 'parsePayload.goals');
-eq(p.roadmap, { 'STM32入门':[true,false] }, 'parsePayload.roadmap');
+// ---- parseExtras（附加数据：goals/roadmap，不含 notes，因为笔记已分散为单文件）----
+var p = G._parseExtras('{"version":1,"notes":[{"id":"n1"}],"goals":[{"id":"g1","name":"A"}],"roadmap":{"STM32入门":[true,false]}}');
+eq(p.goals, [{id:'g1',name:'A'}], 'parseExtras.goals');
+eq(p.roadmap, { 'STM32入门':[true,false] }, 'parseExtras.roadmap');
 
-var pOld = G._parsePayload('[{"id":"n1"}]'); // 旧版仅数组
-eq(pOld.notes, [{id:'n1'}], 'parsePayload 旧版数组兼容 notes');
-eq(pOld.goals, [], 'parsePayload 旧版数组兼容 goals 回退空');
-eq(pOld.roadmap, null, 'parsePayload 旧版数组兼容 roadmap 回退 null');
+var pOld = G._parseExtras('[{"id":"n1"}]'); // 旧版仅数组（无 goals/roadmap）
+eq(pOld.goals, [], 'parseExtras 旧版数组兼容 goals 回退空');
+eq(pOld.roadmap, null, 'parseExtras 旧版数组兼容 roadmap 回退 null');
 
 // ---- mergeGoals：联合 + 较新者胜 ----
 var mg = G._mergeGoals(

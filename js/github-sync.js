@@ -1,14 +1,12 @@
 /**
- * github-sync.js —— 把 GitHub 当"云端后端"做笔记同步
+ * github-sync.js —— 把 GitHub 当"云端后端"做笔记同步（每篇笔记一个文件）
  *
- * 设计要点：
- *  - 全部笔记序列化为一个 JSON 文件（默认 data/notes.json）存进一个私有 GitHub 仓库，
- *    通过 GitHub API（浏览器跨域）读写，无需自建服务器。
- *  - 认证用 Personal Access Token（PAT，需 repo 权限），仅存在浏览器 localStorage。
- *  - 双模式读写：小文件（≤1 MB）走 Contents API（快速）；大文件（>1 MB）自动切换到
- *    Git Data API（blob/tree/commit/ref，支持最大 100 MB），对上层透明。
- *  - 同步策略：启动时自动拉取（合并）；改动后标记待推送；手动拉取/推送。
- *  - 冲突处理：笔记按 id 合并，updatedAt 较新者胜（按笔记粒度，而非整文件覆盖）。
+ * 存储模型（避免单文件 >1MB 触发 GitHub Contents API 限制）：
+ *  - 每篇笔记独立存为一个 JSON 文件：<dir>/notes/<id>.json
+ *  - 学习目标 + 路线图进度合并存一个文件：<dir>/_sync_extras.json
+ *  - 小文件走 Contents API；单个文件 >1MB 时自动回退 Git Data API（最大 100MB）。
+ *  - 认证用 PAT（仅 localStorage），冲突按 id / updatedAt 较新者胜。
+ *  - 推送前先合并云端，再上传；绝不整文件覆盖，云端独有笔记受保护。
  */
 (function (global) {
   'use strict';
@@ -16,11 +14,11 @@
   var CONFIG_KEY = 'gh_sync_config';
   var STATUS_KEY = 'gh_sync_status';
   var DEFAULT_BRANCH = 'main';
-  var DEFAULT_PATH = 'data/notes.json';
+  var DEFAULT_PATH = 'data/notes.json'; // 仅用于推导目录
 
-  var cfg = null;            // 当前配置（懒加载）
-  var state = { sha: null, pending: false };  // 内存态：远端文件 sha、是否有待推送改动
-  var handlers = {};         // onStatus / onError / onSyncStart
+  var cfg = null;
+  var state = { pending: false };
+  var handlers = {};
   var pushTimer = null;
 
   // ---------- 编码（UTF-8 安全，支持中文）----------
@@ -39,10 +37,8 @@
 
   // ---------- 配置 ----------
   function loadConfig() {
-    try {
-      var raw = localStorage.getItem(CONFIG_KEY);
-      cfg = raw ? JSON.parse(raw) : null;
-    } catch (e) { cfg = null; }
+    try { var raw = localStorage.getItem(CONFIG_KEY); cfg = raw ? JSON.parse(raw) : null; }
+    catch (e) { cfg = null; }
     return cfg;
   }
   function getConfig() { return cfg || loadConfig(); }
@@ -60,7 +56,6 @@
       var parts = c.owner.split('/');
       c.owner = parts[0].trim();
       c.repo = parts[1].trim();
-      c.owner = c.owner; // 保持
     }
     cfg = c;
     try { localStorage.setItem(CONFIG_KEY, JSON.stringify(c)); } catch (e) {}
@@ -68,7 +63,7 @@
   }
 
   function clearConfig() {
-    cfg = null; state.sha = null; state.pending = false;
+    cfg = null; state.pending = false;
     try { localStorage.removeItem(CONFIG_KEY); } catch (e) {}
   }
 
@@ -77,7 +72,6 @@
     return !!(c && c.owner && c.repo && c.token);
   }
 
-  // 仓库标识：若只填了 owner 没填 repo（或反之），尝试拼 "owner/repo"
   function repoSlug() {
     var c = getConfig();
     if (!c) return '';
@@ -85,18 +79,25 @@
     return (c.owner + '/' + c.repo).replace(/\/+/g, '/').replace(/^\/|\/$/g, '');
   }
 
-  // ---------- GitHub API ----------
-  function apiBase() {
-    var slug = repoSlug();
-    return 'https://api.github.com/repos/' + slug;
+  // 由 path 推导笔记目录与附加数据文件路径
+  // 例：path = "data/notes.json" → notesDir = "data/notes/"，extrasPath = "data/_sync_extras.json"
+  function notesDir() {
+    var p = getConfig().path || DEFAULT_PATH;
+    return p.replace(/\.json$/, '/');
   }
-  function contentsUrl() {
+  function extrasPath() {
+    var p = getConfig().path || DEFAULT_PATH;
+    var dir = p.substring(0, p.lastIndexOf('/') + 1) || '';
+    return dir + '_sync_extras.json';
+  }
+
+  // ---------- GitHub API 基础 ----------
+  function apiBase() { return 'https://api.github.com/repos/' + repoSlug(); }
+  function contentsUrlFor(path) {
     var c = getConfig();
-    var p = (c.path || DEFAULT_PATH).split('/').map(encodeURIComponent).join('/');
+    var p = path.split('/').map(encodeURIComponent).join('/');
     return apiBase() + '/contents/' + p + '?ref=' + encodeURIComponent(c.branch || DEFAULT_BRANCH);
   }
-  function repoUrl() { return apiBase(); }
-
   function ghHeaders(extra) {
     var c = getConfig();
     var h = {
@@ -108,33 +109,28 @@
     if (extra) Object.keys(extra).forEach(function (k) { h[k] = extra[k]; });
     return h;
   }
-
   function httpError(status, message) { return { status: status, message: message }; }
+  function isTooLargeError(err) {
+    if (!err || !err.message) return false;
+    var m = err.message;
+    return m.indexOf('too large') !== -1 ||
+           m.indexOf('1 MB') !== -1 ||
+           m.indexOf('100 MB') !== -1 ||
+           m.indexOf('blobs up to') !== -1;
+  }
 
-  // ---------- Git Data API（大文件 >1 MB 时使用，支持最大 100 MB）----------
-
-  /** 获取分支最新 commit 的 SHA */
+  // ---------- Git Data API（单文件 >1MB 时回退，支持最大 100MB）----------
   function getRefSha(branch) {
-    var url = apiBase() + '/git/ref/heads/' + encodeURIComponent(branch || DEFAULT_BRANCH);
-    return ghGet(url).then(function (d) { return d.object.sha; });
+    return ghGet(apiBase() + '/git/ref/heads/' + encodeURIComponent(branch || DEFAULT_BRANCH))
+      .then(function (d) { return d.object.sha; });
   }
-
-  /** 获取 commit 对应的 tree（recursive=1 以找到深层路径） */
-  function getTree(commitSha) {
-    return ghGet(apiBase() + '/git/trees/' + commitSha + '?recursive=1');
-  }
-
-  /** 在 tree 中查找指定路径的条目，返回 { sha, mode, type } 或 null */
+  function getTree(commitSha) { return ghGet(apiBase() + '/git/trees/' + commitSha + '?recursive=1'); }
   function findInTree(tree, path) {
     if (!tree || !Array.isArray(tree.tree)) return null;
-    var target = (path || DEFAULT_PATH).replace(/^\//, '');
-    for (var i = 0; i < tree.tree.length; i++) {
-      if (tree.tree[i].path === target) return tree.tree[i];
-    }
+    var t = (path || '').replace(/^\//, '');
+    for (var i = 0; i < tree.tree.length; i++) if (tree.tree[i].path === t) return tree.tree[i];
     return null;
   }
-
-  /** 通过 Git Data API 读取 blob 内容（支持 >1 MB） */
   function getBlobContent(blobSha) {
     return ghGet(apiBase() + '/git/blobs/' + blobSha).then(function (d) {
       if (d.encoding === 'base64') return b64decode(d.content);
@@ -142,95 +138,42 @@
       throw httpError(500, '未知 blob 编码: ' + d.encoding);
     });
   }
-
-  /** 判断 GitHub 错误是否为"文件过大（>1MB）" */
-  function isTooLargeError(err) {
-    if (!err || !err.message) return false;
-    var msg = err.message;
-    return msg.indexOf('too large') !== -1 ||
-           msg.indexOf('1 MB') !== -1 ||
-           msg.indexOf('100 MB') !== -1 ||
-           msg.indexOf('blobs up to') !== -1;
-  }
-
-  /**
-   * 通过 Git Data API 写入大文件：
-   * 1. 创建 blob → 拿到 blobSha
-   * 2. 取当前 commit → 取当前 tree
-   * 3. 构建新 tree（替换目标路径的 blob）
-   * 4. 创建 commit
-   * 5. 更新 branch ref
-   */
-  function writeLargeFile(b64content, message) {
-    var c = getConfig();
-    var branch = c.branch || DEFAULT_BRANCH;
-    var filePath = c.path || DEFAULT_PATH;
-
-    // Step 1: 创建 blob
-    return ghPost(apiBase() + '/git/blobs', {
-      content: b64content,
-      encoding: 'base64'
-    }).then(function (blobData) {
+  function writeLargeFile(path, b64content, message) {
+    var c = getConfig(), branch = c.branch || DEFAULT_BRANCH, filePath = path;
+    return ghPost(apiBase() + '/git/blobs', { content: b64content, encoding: 'base64' }).then(function (blobData) {
       var blobSha = blobData.sha;
-
-      // Step 2: 获取当前 commit SHA 和 tree
       return getRefSha(branch).then(function (commitSha) {
         return getTree(commitSha).then(function (treeData) {
-          var treeSha = treeData.sha;
-
-          // Step 3: 构建新 tree（复制所有条目，替换目标文件）
           var entry = findInTree(treeData, filePath);
           var newTree = [];
           for (var i = 0; i < treeData.tree.length; i++) {
-            var item = treeData.tree[i];
-            if (item.path === filePath) {
-              newTree.push({ path: item.path, mode: item.mode || '100644', type: 'blob', sha: blobSha });
-            } else {
-              newTree.push({ path: item.path, mode: item.mode || (item.type === 'tree' ? '040000' : '100644'), type: item.type, sha: item.sha });
-            }
+            var it = treeData.tree[i];
+            if (it.path === filePath) newTree.push({ path: it.path, mode: it.mode || '100644', type: 'blob', sha: blobSha });
+            else newTree.push({ path: it.path, mode: it.mode || (it.type === 'tree' ? '040000' : '100644'), type: it.type, sha: it.sha });
           }
-          // 如果文件之前不存在（新建），追加到 tree
-          if (!entry) {
-            newTree.push({ path: filePath, mode: '100644', type: 'blob', sha: blobSha });
-          }
-
-          // Step 4: 创建新 tree
-          return ghPost(apiBase() + '/git/trees', { tree: newTree }).then(function (newTreeData) {
-            // Step 5: 创建 commit
+          if (!entry) newTree.push({ path: filePath, mode: '100644', type: 'blob', sha: blobSha });
+          return ghPost(apiBase() + '/git/trees', { tree: newTree }).then(function (nt) {
             return ghPost(apiBase() + '/git/commits', {
-              message: message || ('sync notes ' + new Date().toISOString()),
-              tree: newTreeData.sha,
-              parents: [commitSha]
-            }).then(function (commitData) {
-              // Step 6: 更新 branch ref
-              return ghPatch(apiBase() + '/git/refs/heads/' + encodeURIComponent(branch), {
-                sha: commitData.sha
-              }).then(function () {
-                return commitData.sha; // 返回新的 commit sha 作为"逻辑上的 sha"
-              });
+              message: message || ('sync ' + filePath), tree: nt.sha, parents: [commitSha]
+            }).then(function (cd) {
+              return ghPatch(apiBase() + '/git/refs/heads/' + encodeURIComponent(branch), { sha: cd.sha })
+                .then(function () { return cd.sha; });
             });
           });
         });
       });
     });
   }
-
-  /** 通过 Git Data API 读取远端文件（支持 >1 MB），返回 { content, sha(=commitSha) } */
-  function getFileRawGitData() {
-    var c = getConfig();
-    var branch = c.branch || DEFAULT_BRANCH;
+  function getFileRawGitData(path) {
+    var branch = (getConfig().branch || DEFAULT_BRANCH);
     return getRefSha(branch).then(function (commitSha) {
       return getTree(commitSha).then(function (treeData) {
-        var entry = findInTree(treeData, c.path || DEFAULT_PATH);
-        if (!entry || entry.type !== 'blob') throw httpError(404, '远端数据文件不存在');
-        return getBlobContent(entry.sha).then(function (content) {
-          return { content: content, sha: commitSha }; // 用 commit sha 作为版本标识
-        });
+        var entry = findInTree(treeData, path);
+        if (!entry || entry.type !== 'blob') throw httpError(404, '远端文件不存在');
+        return getBlobContent(entry.sha).then(function (content) { return { content: content, sha: commitSha }; });
       });
     });
   }
-
-  // ---------- GitHub API 通用请求封装 ----------
   function ghGet(url) {
     return fetch(url, { method: 'GET', headers: ghHeaders() }).then(function (r) {
       if (!r.ok) return r.json().then(function (j) { throw httpError(r.status, (j && j.message) || ('HTTP ' + r.status)); },
@@ -253,79 +196,70 @@
     });
   }
 
-  // ---------- 读取远端文件（双模式：小文件 Contents API / 大文件 Git Data API）----------
-  // 返回 { content(string), sha }；404 时抛出 { status: 404 }
-  function getFileRaw() {
-    // 快速路径：先尝试 Contents API（对小文件最简单）
-    return fetch(contentsUrl(), { method: 'GET', headers: ghHeaders() }).then(function (r) {
-      if (r.status === 404) throw httpError(404, '远端数据文件不存在');
+  // ---------- 统一文件读写（小文件 Contents API / 大文件 Git Data API）----------
+  function readRemoteFile(path) {
+    return fetch(contentsUrlFor(path), { method: 'GET', headers: ghHeaders() }).then(function (r) {
+      if (r.status === 404) throw httpError(404, 'not found');
       if (!r.ok) return r.json().then(function (j) {
         var err = httpError(r.status, (j && j.message) || ('HTTP ' + r.status));
-        // 文件过大（>1 MB）→ 自动切换到 Git Data API
-        if (isTooLargeError(err)) throw { _useGitData: true, status: r.status, message: j.message };
+        if (isTooLargeError(err)) throw { _useGitData: true, path: path };
         throw err;
       }, function () { throw httpError(r.status, 'HTTP ' + r.status); });
       return r.json();
-    }).then(function (data) {
-      return { content: b64decode(data.content), sha: data.sha };
-    }, function (err) {
-      if (err && err._useGitData) return getFileRawGitData(); // 大文件：走 Git Data API
-      throw err;
+    }).then(function (data) { return { content: b64decode(data.content), sha: data.sha }; },
+      function (err) { if (err && err._useGitData) return getFileRawGitData(path); throw err; });
+  }
+  function writeRemoteFile(path, content, sha, message) {
+    var body = { message: message || ('sync ' + path), content: content, branch: getConfig().branch || DEFAULT_BRANCH };
+    if (sha) body.sha = sha;
+    return fetch(contentsUrlFor(path), {
+      method: 'PUT', headers: ghHeaders(), body: JSON.stringify(body)
+    }).then(function (r) {
+      if (r.status === 409) throw { conflict: true, status: 409, path: path };
+      if (!r.ok) return r.json().then(function (j) {
+        var err = httpError(r.status, (j && j.message) || ('HTTP ' + r.status));
+        if (isTooLargeError(err)) return writeLargeFile(path, content, message);
+        throw err;
+      }, function () { throw httpError(r.status, 'HTTP ' + r.status); });
+      return r.json();
+    }).then(function (data) { return data.content ? data.content.sha : sha; });
+  }
+  function deleteRemoteFile(path, sha) {
+    return fetch(contentsUrlFor(path), {
+      method: 'DELETE', headers: ghHeaders(),
+      body: JSON.stringify({ message: 'delete ' + path, sha: sha })
+    }).then(function (r) {
+      if (!r.ok) return r.json().then(function (j) { throw httpError(r.status, (j && j.message) || ('HTTP ' + r.status)); },
+        function () { throw httpError(r.status, 'HTTP ' + r.status); });
+      return true;
     });
   }
 
-  // ---------- 写入远端文件（双模式）----------
-  // sha 为 null 表示新建。返回新 sha。
-  function putFile(content, sha, message) {
-    var body = {
-      message: message || ('sync notes ' + new Date().toISOString()),
-      content: content,
-      branch: getConfig().branch || DEFAULT_BRANCH
-    };
-    if (sha) body.sha = sha;
-
-    // 先尝试 Contents API（快速路径）
-    return fetch(contentsUrl(), {
-      method: 'PUT',
-      headers: ghHeaders(),
-      body: JSON.stringify(body)
-    }).then(function (r) {
-      if (r.status === 409) throw { conflict: true, status: 409 };
-      if (!r.ok) return r.json().then(function (j) {
-        var errObj = httpError(r.status, (j && j.message) || ('HTTP ' + r.status));
-        // 文件过大（>1 MB）→ 切换 Git Data API 写入
-        if (isTooLargeError(errObj)) {
-          return writeLargeFile(content, message);
-        }
-        throw errObj;
-      }, function () { throw httpError(r.status, 'HTTP ' + r.status); });
+  // ---------- 笔记目录列举 ----------
+  function listNotesDir() {
+    return fetch(contentsUrlFor(notesDir()), { method: 'GET', headers: ghHeaders() }).then(function (r) {
+      if (r.status === 404) return [];
+      if (!r.ok) return r.json().then(function (j) { throw httpError(r.status, (j && j.message) || ('HTTP ' + r.status)); },
+        function () { throw httpError(r.status, 'HTTP ' + r.status); });
       return r.json();
-    }).then(function (data) {
-      return data.content ? data.content.sha : sha;
+    }).then(function (entries) {
+      if (!Array.isArray(entries)) return [];
+      return entries.filter(function (e) { return e.type === 'file' && /\.json$/.test(e.name); });
     });
   }
 
   // ---------- 数据解析 / 合并 ----------
-  /**
-   * 解析远端文件内容，统一返回 { notes, goals, roadmap }。
-   * 旧版只含 notes 数组的文件也能兼容（goals/roadmap 回退为空）。
-   */
-  function parsePayload(text) {
+  function parseExtras(text) {
     try {
       var obj = JSON.parse(text);
       if (obj && typeof obj === 'object') {
         return {
-          notes: Array.isArray(obj.notes) ? obj.notes : (Array.isArray(obj) ? obj : []),
           goals: Array.isArray(obj.goals) ? obj.goals : [],
           roadmap: (obj.roadmap && typeof obj.roadmap === 'object') ? obj.roadmap : null
         };
       }
     } catch (e) {}
-    return { notes: [], goals: [], roadmap: null };
-  }
-
-  function parseNotes(text) {
-    return parsePayload(text).notes;
+    return { goals: [], roadmap: null };
   }
 
   /** 学习目标按 id 合并：任一端存在即保留；都存在时 updatedAt 较新者胜（相等取远端） */
@@ -342,7 +276,7 @@
     return Object.keys(map).map(function (k) { return map[k]; });
   }
 
-  /** 路线图进度按路线合并：同一节点在任一端为“已完成”则记为完成（OR 合并，避免进度丢失） */
+  /** 路线图进度按路线合并：同一节点在任一端为“已完成”则记为完成（OR 合并） */
   function mergeRoadmap(local, remote) {
     local = local || {}; remote = remote || {};
     var out = JSON.parse(JSON.stringify(local));
@@ -356,7 +290,6 @@
     return out;
   }
 
-  /** 把远端 payload 里的 goals/roadmap 合并写回本地（若存在对应模块） */
   function restoreExtras(obj) {
     if (global.LearningGoals && Array.isArray(obj.goals)) {
       global.LearningGoals.replaceAll(mergeGoals(global.LearningGoals.getAll(), obj.goals));
@@ -399,70 +332,71 @@
   function notifyError(msg) { if (handlers.onError) try { handlers.onError(msg); } catch (e) {} }
   function notifySyncStart() { if (handlers.onSyncStart) try { handlers.onSyncStart(); } catch (e) {} }
 
-  // ---------- 拉取 / 推送 ----------
+  // ---------- 读取云端全部笔记 + 附加数据 ----------
+  function fetchRemote() {
+    return listNotesDir().then(function (entries) {
+      var byName = {};
+      entries.forEach(function (e) { byName[e.name] = e; });
+      return Promise.all(entries.map(function (e) {
+        return readRemoteFile(notesDir() + e.name).then(function (f) {
+          try { return JSON.parse(f.content); } catch (e2) { return null; }
+        }).catch(function () { return null; });
+      })).then(function (objs) {
+        var remoteNotes = objs.filter(Boolean);
+        return readRemoteFile(extrasPath()).then(function (f) {
+          return { remoteNotes: remoteNotes, extras: parseExtras(f.content), byName: byName, extrasSha: f.sha };
+        }, function (err) {
+          if (err && err.status === 404) return { remoteNotes: remoteNotes, extras: { goals: [], roadmap: null }, byName: byName, extrasSha: null };
+          throw err;
+        });
+      });
+    });
+  }
+
+  // ---------- 拉取 ----------
   function pull() {
-    return getFileRaw().then(function (f) {
-      state.sha = f.sha;
-      var obj = parsePayload(f.content);
-      var remoteNotes = Array.isArray(obj.notes) ? obj.notes : [];
-      var localCount = global.NoteStore.getAll().length;
+    var localCount = global.NoteStore.getAll().length;
+    return fetchRemote().then(function (res) {
+      var remoteNotes = res.remoteNotes, extras = res.extras;
       var merged = mergeNotes(global.NoteStore.getAll(), remoteNotes);
       global.NoteStore.replaceAll(merged);
-      // 同步学习目标与路线图进度（跨设备不丢失）
-      restoreExtras(obj);
-      // 云端为空但本机有数据：不要静默“成功”，明确点出很可能是旧版 push 把云端清空了
+      restoreExtras(extras);
       var warn = (remoteNotes.length === 0 && localCount > 0)
-        ? '云端文件为空(0条)，已保留本机 ' + merged.length + ' 条；请在“有真实笔记的设备”点「⬆ 推送」恢复云端'
+        ? '云端文件为空(0条)，已保留本机 ' + merged.length + ' 条；请在有真实笔记的设备点「⬆ 推送」恢复云端'
         : null;
       writeStatus({ lastSynced: Date.now(), lastError: warn, lastPullRemote: remoteNotes.length, lastPullLocal: merged.length });
       emitStatus();
       if (handlers.onAfterSync) try { handlers.onAfterSync(); } catch (e) {}
       return merged;
     }, function (err) {
-      if (err && err.status === 404) {
-        // 远端尚无数据文件：置空 sha，下次 push 会新建；本地数据不变
-        state.sha = null;
-        writeStatus({ lastError: null });
-        emitStatus();
-        return [];
-      }
-      writeStatus({ lastError: errMsg(err) });
-      emitStatus();
-      throw err;
+      if (err && err.status === 404) { writeStatus({ lastError: null }); emitStatus(); return []; }
+      writeStatus({ lastError: errMsg(err) }); emitStatus(); throw err;
     });
   }
 
-  /**
-   * 强制从云端覆盖拉取：用远端数据“完全替换”本地（笔记 / 学习目标 / 路线图进度），
-   * 不保留本地独有项。用于解决“本地陈旧数据在合并时胜出、导致云端新内容拉不下来”的问题。
-   */
+  // ---------- 强制从云端覆盖拉取 ----------
   function forcePull() {
-    return getFileRaw().then(function (f) {
-      state.sha = f.sha;
-      var obj = parsePayload(f.content);
-      var remoteNotes = Array.isArray(obj.notes) ? obj.notes : [];
-      var localCount = global.NoteStore.getAll().length;
-      // 安全护栏：云端为空但本机有数据 → 不覆盖，避免「清空本机」式灾难
+    var localCount = global.NoteStore.getAll().length;
+    return fetchRemote().then(function (res) {
+      var remoteNotes = res.remoteNotes.filter(Boolean);
       if (remoteNotes.length === 0 && localCount > 0) {
         var msg = '云端为空(0 条)，已保留本机 ' + localCount + ' 条，未执行覆盖';
         writeStatus({ lastSynced: Date.now(), lastError: msg, lastPullRemote: 0, lastPullLocal: localCount });
         emitStatus();
         return global.NoteStore.getAll();
       }
-      global.NoteStore.replaceAll(remoteNotes.slice());
-      restoreExtras(obj);
+      global.NoteStore.replaceAll(remoteNotes);
+      restoreExtras(res.extras);
       writeStatus({ lastSynced: Date.now(), lastError: null, lastPullRemote: remoteNotes.length, lastPullLocal: remoteNotes.length });
       emitStatus();
       if (handlers.onAfterSync) try { handlers.onAfterSync(); } catch (e) {}
       return remoteNotes;
     }, function (err) {
-      writeStatus({ lastError: errMsg(err) });
-      emitStatus();
-      throw err;
+      writeStatus({ lastError: errMsg(err) }); emitStatus(); throw err;
     });
   }
 
-  /** 计算本地相对云端的差异，用于「推送」前给用户反馈（按更新情况推送） */
+  // ---------- diff（推送前反馈）----------
   function diffNotes(local, remote) {
     var rmap = {};
     (remote || []).forEach(function (n) { if (n && n.id) rmap[n.id] = n; });
@@ -478,49 +412,53 @@
     return { added: added, updated: updated, unchanged: unchanged, remoteNewer: remoteNewer };
   }
 
+  // ---------- 推送（先合并云端，再逐篇上传；不删除云端独有笔记）----------
   function push() {
     if (!isConfigured()) return Promise.reject(httpError(400, '未配置同步'));
 
-    // 关键修复：推送前始终先取远端最新内容，把云端数据合并进本地后，
-    // 用「合并后的结果」作为上传内容。这样无论本地是否落后（设备离线 / 自动推送抢在
-    // 启动拉取之前），都不会用陈旧本地数据整文件覆盖云端，从而避免丢失另一设备的新内容。
-    var getRemote = getFileRaw().catch(function (err) {
-      if (err && err.status === 404) return { sha: null, content: null }; // 远端尚无数据文件
-      throw err; // 401/403 等：不盲目上传
-    });
+    var localNotes = global.NoteStore.getAll();
+    var localGoals = global.LearningGoals ? global.LearningGoals.getAll() : [];
+    var localRoadmap = global.Roadmap ? global.Roadmap.getAll() : {};
 
-    return getRemote.then(function (remote) {
-      var remoteObj = (remote.content != null) ? parsePayload(remote.content) : null;
+    return fetchRemote().then(function (res) {
+      var remoteNotes = res.remoteNotes, extras = res.extras, byName = res.byName, extrasSha = res.extrasSha;
 
-      var localNotes = global.NoteStore.getAll();
-      var localGoals = global.LearningGoals ? global.LearningGoals.getAll() : [];
-      var localRoadmap = global.Roadmap ? global.Roadmap.getAll() : {};
+      // 合并（保护云端独有笔记 + updatedAt 较新者胜）
+      var merged = mergeNotes(localNotes, remoteNotes);
+      var mergedGoals = mergeGoals(localGoals, extras.goals);
+      var mergedRoadmap = mergeRoadmap(localRoadmap, extras.roadmap);
 
-      // 推送前先算出差异，反馈给用户（新增 / 更新本机 / 保留云端较新）
-      var d = remoteObj ? diffNotes(localNotes, remoteObj.notes)
-                        : { added: localNotes.length, updated: 0, unchanged: 0, remoteNewer: 0 };
+      // 推前差异（基于合并前的 remoteNotes）
+      var d = diffNotes(localNotes, remoteNotes);
 
-      // 合并：远端 + 本地（笔记按 id、updatedAt 较新者胜；目标/路线图按既有合并规则）
-      var mergedNotes = remoteObj ? mergeNotes(localNotes, remoteObj.notes) : localNotes.slice();
-      var mergedGoals = remoteObj ? mergeGoals(localGoals, remoteObj.goals) : localGoals.slice();
-      var mergedRoadmap = remoteObj ? mergeRoadmap(localRoadmap, remoteObj.roadmap) : localRoadmap;
-
-      // 写回本地，保证本地与「即将上传的内容」一致（下次启动拉取也能拿到合并结果）
-      global.NoteStore.replaceAll(mergedNotes);
+      // 写回本地，保证与即将上传一致
+      global.NoteStore.replaceAll(merged);
       if (global.LearningGoals) global.LearningGoals.replaceAll(mergedGoals);
       if (global.Roadmap) global.Roadmap.replaceAll(mergedRoadmap);
 
-      var payload = JSON.stringify({
-        version: 1,
-        syncedAt: Date.now(),
-        notes: mergedNotes,
-        goals: mergedGoals,
-        roadmap: mergedRoadmap
+      // 逐篇上传笔记（含云端独有，已合并进 merged）
+      var writes = merged.map(function (note) {
+        if (!note || !note.id) return Promise.resolve();
+        var name = note.id + '.json';
+        var entry = byName[name];
+        var content = b64encode(JSON.stringify(note));
+        return writeRemoteFile(notesDir() + name, content, entry ? entry.sha : null, 'sync note ' + note.id)
+          .catch(function (err) {
+            if (err && err.conflict) {
+              // 并发冲突：重新取 sha 再写一次
+              return readRemoteFile(notesDir() + name).then(function (f) {
+                return writeRemoteFile(notesDir() + name, content, f.sha, 'sync note ' + note.id);
+              });
+            }
+            throw err;
+          });
       });
-      var content = b64encode(payload);
 
-      return putFile(content, remote.sha, 'sync notes ' + new Date().toISOString()).then(function (newSha) {
-        state.sha = newSha;
+      // 上传附加数据（goals/roadmap）
+      var extrasContent = b64encode(JSON.stringify({ version: 1, goals: mergedGoals, roadmap: mergedRoadmap }));
+      var extrasWrite = writeRemoteFile(extrasPath(), extrasContent, extrasSha, 'sync extras');
+
+      return Promise.all(writes.concat([extrasWrite])).then(function () {
         state.pending = false;
         writeStatus({ lastSynced: Date.now(), lastError: null, lastPushDiff: d });
         emitStatus();
@@ -530,9 +468,7 @@
 
   function pushWithRetry() {
     return push().catch(function (err) {
-      if (err && err.conflict) {
-        return pull().then(function () { return push(); });
-      }
+      if (err && err.conflict) return pull().then(function () { return push(); });
       throw err;
     });
   }
@@ -549,36 +485,25 @@
       });
   }
 
-  // 改动后：仅标记“待推送”，不再自动上传。
-  // 改为由用户在同步弹窗点「推送」按钮显式同步，杜绝任何自动覆盖云端的行为。
+  // 改动后：仅标记“待推送”，不再自动上传
   function markDirty() {
     if (!isConfigured()) return;
     state.pending = true;
     emitStatus();
   }
-
-  // 本地改动钩子（由 app.js 在 save/delete 后调用）：只标记状态，不触发网络
   function onLocalChange() { markDirty(); }
-
-  // 保留旧名兼容（行为已改为仅标记，不再自动推送）
   function schedulePush() { markDirty(); }
 
-  // 启动拉取（静默：失败时只记录状态，不打扰用户）。
-  // 仅做“拉取（合并云端→本机）”，不自动上传，避免覆盖云端。
+  // 启动拉取（静默：失败只记录状态）
   function initPull(onDone) {
     if (!isConfigured()) { if (onDone) onDone(); return; }
-    pull().then(function () {
-      if (onDone) onDone();
-    }, function (err) {
-      writeStatus({ lastError: errMsg(err) });
-      emitStatus();
-      if (onDone) onDone();
-    });
+    pull().then(function () { if (onDone) onDone(); },
+      function (err) { writeStatus({ lastError: errMsg(err) }); emitStatus(); if (onDone) onDone(); });
   }
 
   // 测试连接（读取仓库元数据）
   function testConnection() {
-    return fetch(repoUrl(), { method: 'GET', headers: ghHeaders() }).then(function (r) {
+    return fetch(apiBase(), { method: 'GET', headers: ghHeaders() }).then(function (r) {
       if (r.ok) return { ok: true, message: '连接成功，仓库可访问' };
       return r.json().then(function (j) {
         return { ok: false, message: (j && j.message) || ('HTTP ' + r.status) };
@@ -618,9 +543,12 @@
     _mergeNotes: mergeNotes,
     _mergeGoals: mergeGoals,
     _mergeRoadmap: mergeRoadmap,
-    _parsePayload: parsePayload,
+    _parseExtras: parseExtras,
     _b64encode: b64encode,
     _b64decode: b64decode,
-    _parseNotes: parseNotes
+    _notesDir: notesDir,
+    _extrasPath: extrasPath,
+    _listNotesDir: listNotesDir,
+    _fetchRemote: fetchRemote
   };
 })(window);
