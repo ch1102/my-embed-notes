@@ -266,6 +266,27 @@
     });
   }
 
+  /**
+   * 强制从云端覆盖拉取：用远端数据“完全替换”本地（笔记 / 学习目标 / 路线图进度），
+   * 不保留本地独有项。用于解决“本地陈旧数据在合并时胜出、导致云端新内容拉不下来”的问题。
+   */
+  function forcePull() {
+    return getFileRaw().then(function (f) {
+      state.sha = f.sha;
+      var obj = parsePayload(f.content);
+      global.NoteStore.replaceAll(obj.notes.slice());
+      restoreExtras(obj);
+      writeStatus({ lastSynced: Date.now(), lastError: null });
+      emitStatus();
+      if (handlers.onAfterSync) try { handlers.onAfterSync(); } catch (e) {}
+      return obj.notes;
+    }, function (err) {
+      writeStatus({ lastError: errMsg(err) });
+      emitStatus();
+      throw err;
+    });
+  }
+
   function push() {
     var notes = global.NoteStore.getAll();
     var payload = JSON.stringify({
@@ -384,6 +405,7 @@
     initPull: initPull,
     syncNow: syncNow,
     pull: pull,
+    forcePull: forcePull,
     push: push,
     schedulePush: schedulePush,
     onLocalChange: onLocalChange,

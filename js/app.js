@@ -79,6 +79,7 @@
   var syncTest = $('syncTest');
   var syncSave = $('syncSave');
   var syncNowBtn = $('syncNow');
+  var syncForceBtn = $('syncForce');
   var syncClose = $('syncClose');
 
   // 随缘复习（闪卡）
@@ -2696,6 +2697,25 @@
     });
     syncClose.addEventListener('click', function () { syncModal.hidden = true; });
     syncModal.addEventListener('click', function (e) { if (e.target === this) syncModal.hidden = true; });
+
+    // 从云端覆盖拉取：用远端数据替换本地（解决“本地陈旧数据在合并时胜出、云端新内容拉不下来”）
+    if (syncForceBtn) syncForceBtn.addEventListener('click', function () {
+      if (!window.GitHubSync) { showSnack('同步模块未加载'); return; }
+      if (!window.GitHubSync.isConfigured()) { showSnack('请先填写并保存配置'); return; }
+      if (!window.confirm('将用云端数据覆盖本设备本地笔记/目标/路线图，确定继续？')) return;
+      syncForceBtn.disabled = true; syncForceBtn.textContent = '拉取中…';
+      window.GitHubSync.forcePull()
+        .then(function () {
+          showSnack('已从云端覆盖拉取 ✓');
+          renderHome();
+          if (typeof renderGoalsPanel === 'function') renderGoalsPanel();
+        })
+        .catch(function () { /* 错误已由 onError/状态提示 */ })
+        .then(function () {
+          syncForceBtn.disabled = false; syncForceBtn.textContent = '从云端覆盖拉取';
+          refreshSyncStatus();
+        });
+    });
 
     // 桌面端 Ctrl/Cmd+S 保存
     document.addEventListener('keydown', function (e) {

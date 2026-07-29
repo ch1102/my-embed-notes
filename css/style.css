@@ -325,6 +325,7 @@ svg { width: 24px; height: 24px; fill: currentColor; }
 .btn { border: none; border-radius: 999px; padding: 12px 22px; font-size: 14px; cursor: pointer; font-weight: 500; }
 .btn--filled { background: var(--primary); color: var(--on-primary); }
 .btn--text { background: transparent; color: var(--primary); }
+.btn--warn { background: transparent; color: #c05621; border: 1px solid #c05621; }
 .btn--danger { color: var(--error); }
 .btn:active { opacity: .85; }
 
