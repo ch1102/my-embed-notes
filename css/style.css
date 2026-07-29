@@ -322,7 +322,7 @@ svg { width: 24px; height: 24px; fill: currentColor; }
 .editor-actions[hidden] { display: none; }
 
 /* ---------- 按钮 ---------- */
-.btn { border: none; border-radius: 999px; padding: 12px 22px; font-size: 14px; cursor: pointer; font-weight: 500; }
+.btn { border: none; border-radius: 999px; padding: 8px 10px; font-size: 14px; cursor: pointer; font-weight: 500; }
 .btn--filled { background: var(--primary); color: var(--on-primary); }
 .btn--text { background: transparent; color: var(--primary); }
 .btn--warn { background: transparent; color: #c05621; border: 1px solid #c05621; }
@@ -338,7 +338,6 @@ svg { width: 24px; height: 24px; fill: currentColor; }
 .modal__panel { background: var(--surface); border-radius: var(--radius); overflow: hidden; width: 100%; max-width: 460px; }
 .modal__panel video { width: 100%; display: block; background: #000; max-height: 60vh; }
 .modal__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; padding: 12px 16px; }
-/* 主操作（推送）独占一行，避免被裁切/淹没 */
 
 /* ---------- 空状态 ---------- */
 .empty-state { text-align: center; color: var(--on-surface-variant); padding: 60px 24px; }
@@ -398,7 +397,7 @@ svg { width: 24px; height: 24px; fill: currentColor; }
 .hl-pre     { color: #c586c0; }
 
 /* ---------- 代码语言选择弹层 ---------- */
-.modal__panel--sheet { max-width: 360px; }
+.modal__panel--sheet { max-width: 480px; padding: 8px;}
 .modal__title { margin: 0; padding: 16px 16px 8px; font-size: 16px; }
 .lang-grid { display: flex; flex-direction: column; gap: 8px; padding: 0 16px 8px; }
 .lang-btn {
