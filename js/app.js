@@ -2760,7 +2760,11 @@
       txt = '已配置仓库：' + window.GitHubSync.repoSlug() + '　路径：' + (cfg.path || 'data/notes.json');
       if (s.lastSynced) txt += '　·　上次同步：' + fmtTime(s.lastSynced);
       if (s.pending) txt += '　·　有改动待同步';
-      if (s.lastPullRemote != null) txt += '　·　云端 ' + s.lastPullRemote + ' 条 / 本地 ' + s.lastPullLocal + ' 条';
+      if (s.lastPullRemote != null) {
+        var remoteTxt = '云端 ' + s.lastPullRemote + ' 条';
+        if (s.lastPullExpected) remoteTxt += '/' + s.lastPullExpected;
+        txt += '　·　' + remoteTxt + ' / 本地 ' + s.lastPullLocal + ' 条';
+      }
       if (s.lastPushDiff) {
         var d = s.lastPushDiff;
         txt += '　·　推送：新增 ' + d.added + ' / 更新 ' + d.updated + ' / 保留云端较新 ' + d.remoteNewer + ' 条';

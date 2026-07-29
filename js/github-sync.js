@@ -339,14 +339,22 @@
       entries.forEach(function (e) { byName[e.name] = e; });
       return Promise.all(entries.map(function (e) {
         return readRemoteFile(notesDir() + e.name).then(function (f) {
-          try { return JSON.parse(f.content); } catch (e2) { return null; }
-        }).catch(function () { return null; });
-      })).then(function (objs) {
-        var remoteNotes = objs.filter(Boolean);
+          try { return { ok: true, note: JSON.parse(f.content), name: e.name }; } catch (e2) {
+            return { ok: false, name: e.name, reason: 'JSON解析失败: ' + (e2.message || e2) };
+          }
+        }).catch(function (err) {
+          return { ok: false, name: e.name, reason: errMsg(err) || '未知错误' };
+        });
+      })).then(function (results) {
+        var remoteNotes = [], failures = [];
+        results.forEach(function (r) {
+          if (r.ok && r.note && r.note.id) remoteNotes.push(r.note);
+          else failures.push(r.name + '(' + (r.reason || '?') + ')');
+        });
         return readRemoteFile(extrasPath()).then(function (f) {
-          return { remoteNotes: remoteNotes, extras: parseExtras(f.content), byName: byName, extrasSha: f.sha };
+          return { remoteNotes: remoteNotes, extras: parseExtras(f.content), byName: byName, extrasSha: f.sha, failures: failures };
         }, function (err) {
-          if (err && err.status === 404) return { remoteNotes: remoteNotes, extras: { goals: [], roadmap: null }, byName: byName, extrasSha: null };
+          if (err && err.status === 404) return { remoteNotes: remoteNotes, extras: { goals: [], roadmap: null }, byName: byName, extrasSha: null, failures: failures };
           throw err;
         });
       });
@@ -357,14 +365,19 @@
   function pull() {
     var localCount = global.NoteStore.getAll().length;
     return fetchRemote().then(function (res) {
-      var remoteNotes = res.remoteNotes, extras = res.extras;
+      var remoteNotes = res.remoteNotes, extras = res.extras, failures = res.failures || [];
       var merged = mergeNotes(global.NoteStore.getAll(), remoteNotes);
       global.NoteStore.replaceAll(merged);
       restoreExtras(extras);
-      var warn = (remoteNotes.length === 0 && localCount > 0)
-        ? '云端文件为空(0条)，已保留本机 ' + merged.length + ' 条；请在有真实笔记的设备点「⬆ 推送」恢复云端'
-        : null;
-      writeStatus({ lastSynced: Date.now(), lastError: warn, lastPullRemote: remoteNotes.length, lastPullLocal: merged.length });
+      // 构建警告信息
+      var warn = null;
+      if (remoteNotes.length === 0 && localCount > 0) {
+        warn = '云端文件为空(0条)，已保留本机 ' + merged.length + ' 条；请在有真实笔记的设备点「⬆ 推送」恢复云端';
+      }
+      if (failures.length > 0) {
+        warn = (warn ? warn + '；' : '') + '⚠ ' + failures.length + ' 篇笔记读取失败: ' + failures.join('、');
+      }
+      writeStatus({ lastSynced: Date.now(), lastError: warn, lastPullRemote: remoteNotes.length, lastPullLocal: merged.length, lastPullExpected: (res.byName ? Object.keys(res.byName).length : remoteNotes.length) + (failures.length ? ' (失败' + failures.length + ')' : '') });
       emitStatus();
       if (handlers.onAfterSync) try { handlers.onAfterSync(); } catch (e) {}
       return merged;
@@ -378,7 +391,7 @@
   function forcePull() {
     var localCount = global.NoteStore.getAll().length;
     return fetchRemote().then(function (res) {
-      var remoteNotes = res.remoteNotes.filter(Boolean);
+      var remoteNotes = res.remoteNotes, failures = res.failures || [];
       if (remoteNotes.length === 0 && localCount > 0) {
         var msg = '云端为空(0 条)，已保留本机 ' + localCount + ' 条，未执行覆盖';
         writeStatus({ lastSynced: Date.now(), lastError: msg, lastPullRemote: 0, lastPullLocal: localCount });
@@ -387,7 +400,8 @@
       }
       global.NoteStore.replaceAll(remoteNotes);
       restoreExtras(res.extras);
-      writeStatus({ lastSynced: Date.now(), lastError: null, lastPullRemote: remoteNotes.length, lastPullLocal: remoteNotes.length });
+      var warn = failures.length > 0 ? ('⚠ ' + failures.length + ' 篇笔记读取失败: ' + failures.join('、')) : null;
+      writeStatus({ lastSynced: Date.now(), lastError: warn, lastPullRemote: remoteNotes.length, lastPullLocal: remoteNotes.length });
       emitStatus();
       if (handlers.onAfterSync) try { handlers.onAfterSync(); } catch (e) {}
       return remoteNotes;
