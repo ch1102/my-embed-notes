@@ -297,6 +297,22 @@
     });
   }
 
+  /** 计算本地相对云端的差异，用于「推送」前给用户反馈（按更新情况推送） */
+  function diffNotes(local, remote) {
+    var rmap = {};
+    (remote || []).forEach(function (n) { if (n && n.id) rmap[n.id] = n; });
+    var added = 0, updated = 0, unchanged = 0, remoteNewer = 0;
+    (local || []).forEach(function (n) {
+      if (!n || !n.id) return;
+      var r = rmap[n.id];
+      if (!r) added++;
+      else if ((n.updatedAt || 0) > (r.updatedAt || 0)) updated++;
+      else if ((r.updatedAt || 0) > (n.updatedAt || 0)) remoteNewer++;
+      else unchanged++;
+    });
+    return { added: added, updated: updated, unchanged: unchanged, remoteNewer: remoteNewer };
+  }
+
   function push() {
     if (!isConfigured()) return Promise.reject(httpError(400, '未配置同步'));
 
@@ -314,6 +330,10 @@
       var localNotes = global.NoteStore.getAll();
       var localGoals = global.LearningGoals ? global.LearningGoals.getAll() : [];
       var localRoadmap = global.Roadmap ? global.Roadmap.getAll() : {};
+
+      // 推送前先算出差异，反馈给用户（新增 / 更新本机 / 保留云端较新）
+      var d = remoteObj ? diffNotes(localNotes, remoteObj.notes)
+                        : { added: localNotes.length, updated: 0, unchanged: 0, remoteNewer: 0 };
 
       // 合并：远端 + 本地（笔记按 id、updatedAt 较新者胜；目标/路线图按既有合并规则）
       var mergedNotes = remoteObj ? mergeNotes(localNotes, remoteObj.notes) : localNotes.slice();
@@ -337,7 +357,7 @@
       return putFile(content, remote.sha, 'sync notes ' + new Date().toISOString()).then(function (newSha) {
         state.sha = newSha;
         state.pending = false;
-        writeStatus({ lastSynced: Date.now(), lastError: null });
+        writeStatus({ lastSynced: Date.now(), lastError: null, lastPushDiff: d });
         emitStatus();
       });
     });
@@ -364,30 +384,25 @@
       });
   }
 
-  // 改动后防抖推送
-  function schedulePush() {
+  // 改动后：仅标记“待推送”，不再自动上传。
+  // 改为由用户在同步弹窗点「推送」按钮显式同步，杜绝任何自动覆盖云端的行为。
+  function markDirty() {
     if (!isConfigured()) return;
     state.pending = true;
     emitStatus();
-    if (pushTimer) clearTimeout(pushTimer);
-    pushTimer = setTimeout(function () {
-      pushTimer = null;
-      pushWithRetry().catch(function (err) {
-        notifyError('自动同步失败：' + errMsg(err));
-      });
-    }, 1500);
   }
 
-  // 本地改动钩子（由 app.js 在 save/delete 后调用）
-  function onLocalChange() { schedulePush(); }
+  // 本地改动钩子（由 app.js 在 save/delete 后调用）：只标记状态，不触发网络
+  function onLocalChange() { markDirty(); }
 
-  // 启动拉取（静默：失败时只记录状态，不打扰用户）
+  // 保留旧名兼容（行为已改为仅标记，不再自动推送）
+  function schedulePush() { markDirty(); }
+
+  // 启动拉取（静默：失败时只记录状态，不打扰用户）。
+  // 仅做“拉取（合并云端→本机）”，不自动上传，避免覆盖云端。
   function initPull(onDone) {
     if (!isConfigured()) { if (onDone) onDone(); return; }
     pull().then(function () {
-      // 拉取完成后补推一次：把本地可能尚未上传的学习目标/路线图进度推上去，
-      // 避免「只拉不推」导致旧设备上的目标永远留在本地、不上云。
-      schedulePush();
       if (onDone) onDone();
     }, function (err) {
       writeStatus({ lastError: errMsg(err) });

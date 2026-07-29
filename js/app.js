@@ -78,8 +78,8 @@
   var syncStatus = $('syncStatus');
   var syncTest = $('syncTest');
   var syncSave = $('syncSave');
-  var syncNowBtn = $('syncNow');
-  var syncForceBtn = $('syncForce');
+  var syncPullBtn = $('syncPull');
+  var syncPushBtn = $('syncPush');
   var syncClose = $('syncClose');
 
   // 随缘复习（闪卡）
@@ -2686,36 +2686,29 @@
     // GitHub 同步：打开 / 保存 / 测试连接 / 立即同步 / 关闭
     syncSave.addEventListener('click', saveSyncConfig);
     syncTest.addEventListener('click', testSyncConnection);
-    syncNowBtn.addEventListener('click', function () {
+    syncPullBtn.addEventListener('click', function () {
       if (!window.GitHubSync) { showSnack('同步模块未加载'); return; }
       if (!window.GitHubSync.isConfigured()) { showSnack('请先填写并保存配置'); return; }
-      syncNowBtn.disabled = true; syncNowBtn.textContent = '同步中…';
-      window.GitHubSync.syncNow()
-        .then(function () { showSnack('同步完成 ✓'); refreshHomeAndStats(); })
+      syncPullBtn.disabled = true; syncPullBtn.textContent = '拉取中…';
+      window.GitHubSync.pull()
+        .then(function () { showSnack('拉取完成 ✓'); refreshHomeAndStats(); })
         .catch(function () { /* 错误已由 onError 提示 */ })
-        .then(function () { syncNowBtn.disabled = false; syncNowBtn.textContent = '立即同步'; refreshSyncStatus(); });
+        .then(function () { syncPullBtn.disabled = false; syncPullBtn.textContent = '⬇ 拉取（云端→本机）'; refreshSyncStatus(); });
+    });
+    syncPushBtn.addEventListener('click', function () {
+      if (!window.GitHubSync) { showSnack('同步模块未加载'); return; }
+      if (!window.GitHubSync.isConfigured()) { showSnack('请先填写并保存配置'); return; }
+      syncPushBtn.disabled = true; syncPushBtn.textContent = '推送中…';
+      window.GitHubSync.push()
+        .then(function () { showSnack('推送完成 ✓'); })
+        .catch(function () { /* 错误已由 onError 提示 */ })
+        .then(function () {
+          syncPushBtn.disabled = false; syncPushBtn.textContent = '⬆ 推送（本机→云端）';
+          refreshHomeAndStats(); refreshSyncStatus();
+        });
     });
     syncClose.addEventListener('click', function () { syncModal.hidden = true; });
     syncModal.addEventListener('click', function (e) { if (e.target === this) syncModal.hidden = true; });
-
-    // 从云端覆盖拉取：用远端数据替换本地（解决“本地陈旧数据在合并时胜出、云端新内容拉不下来”）
-    if (syncForceBtn) syncForceBtn.addEventListener('click', function () {
-      if (!window.GitHubSync) { showSnack('同步模块未加载'); return; }
-      if (!window.GitHubSync.isConfigured()) { showSnack('请先填写并保存配置'); return; }
-      if (!window.confirm('将用云端数据覆盖本设备本地笔记/目标/路线图，确定继续？')) return;
-      syncForceBtn.disabled = true; syncForceBtn.textContent = '拉取中…';
-      window.GitHubSync.forcePull()
-        .then(function () {
-          showSnack('已从云端覆盖拉取 ✓');
-          renderHome();
-          if (typeof renderGoalsPanel === 'function') renderGoalsPanel();
-        })
-        .catch(function () { /* 错误已由 onError/状态提示 */ })
-        .then(function () {
-          syncForceBtn.disabled = false; syncForceBtn.textContent = '从云端覆盖拉取';
-          refreshSyncStatus();
-        });
-    });
 
     // 桌面端 Ctrl/Cmd+S 保存
     document.addEventListener('keydown', function (e) {
@@ -2767,6 +2760,10 @@
       if (s.lastSynced) txt += '　·　上次同步：' + fmtTime(s.lastSynced);
       if (s.pending) txt += '　·　有改动待同步';
       if (s.lastPullRemote != null) txt += '　·　云端 ' + s.lastPullRemote + ' 条 / 本地 ' + s.lastPullLocal + ' 条';
+      if (s.lastPushDiff) {
+        var d = s.lastPushDiff;
+        txt += '　·　推送：新增 ' + d.added + ' / 更新 ' + d.updated + ' / 保留云端较新 ' + d.remoteNewer + ' 条';
+      }
       if (s.lastError) txt += '　·　⚠ ' + s.lastError;
     }
     syncStatus.textContent = txt;
