@@ -200,14 +200,24 @@
   function readRemoteFile(path) {
     return fetch(contentsUrlFor(path), { method: 'GET', headers: ghHeaders() }).then(function (r) {
       if (r.status === 404) throw httpError(404, 'not found');
-      if (!r.ok) return r.json().then(function (j) {
-        var err = httpError(r.status, (j && j.message) || ('HTTP ' + r.status));
-        if (isTooLargeError(err)) throw { _useGitData: true, path: path };
-        throw err;
-      }, function () { throw httpError(r.status, 'HTTP ' + r.status); });
+      if (!r.ok) {
+        return r.json().then(function (j) {
+          var err = httpError(r.status, (j && j.message) || ('HTTP ' + r.status));
+          if (isTooLargeError(err)) throw { _useGitData: true, path: path };
+          throw err;
+        }, function () { throw httpError(r.status, 'HTTP ' + r.status); });
+      }
       return r.json();
-    }).then(function (data) { return { content: b64decode(data.content), sha: data.sha }; },
-      function (err) { if (err && err._useGitData) return getFileRawGitData(path); throw err; });
+    }).then(function (data) {
+      // ========== 新增修复：检查 content 是否为 null 或 message 包含 too large ==========
+      if (!data.content || (data.message && data.message.toLowerCase().indexOf('too large') !== -1)) {
+        throw { _useGitData: true, path: path };
+      }
+      return { content: b64decode(data.content), sha: data.sha };
+    }, function (err) {
+      if (err && err._useGitData) return getFileRawGitData(path);
+      throw err;
+    });
   }
   function writeRemoteFile(path, content, sha, message) {
     var body = { message: message || ('sync ' + path), content: content, branch: getConfig().branch || DEFAULT_BRANCH };
