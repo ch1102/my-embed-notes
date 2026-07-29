@@ -2693,7 +2693,7 @@
       window.GitHubSync.pull()
         .then(function () { showSnack('拉取完成 ✓'); refreshHomeAndStats(); })
         .catch(function () { /* 错误已由 onError 提示 */ })
-        .then(function () { syncPullBtn.disabled = false; syncPullBtn.textContent = '⬇ 拉取（云端→本机）'; refreshSyncStatus(); });
+        .then(function () { syncPullBtn.disabled = false; syncPullBtn.textContent = '拉取'; refreshSyncStatus(); });
     });
     syncPushBtn.addEventListener('click', function () {
       if (!window.GitHubSync) { showSnack('同步模块未加载'); return; }
@@ -2703,7 +2703,7 @@
         .then(function () { showSnack('推送完成 ✓'); })
         .catch(function () { /* 错误已由 onError 提示 */ })
         .then(function () {
-          syncPushBtn.disabled = false; syncPushBtn.textContent = '⬆ 推送（本机→云端）';
+          syncPushBtn.disabled = false; syncPushBtn.textContent = '推送';
           refreshHomeAndStats(); refreshSyncStatus();
         });
     });
