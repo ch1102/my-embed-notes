@@ -245,11 +245,16 @@
       state.sha = f.sha;
       var obj = parsePayload(f.content);
       var remoteNotes = Array.isArray(obj.notes) ? obj.notes : [];
+      var localCount = global.NoteStore.getAll().length;
       var merged = mergeNotes(global.NoteStore.getAll(), remoteNotes);
       global.NoteStore.replaceAll(merged);
       // 同步学习目标与路线图进度（跨设备不丢失）
       restoreExtras(obj);
-      writeStatus({ lastSynced: Date.now(), lastError: null, lastPullRemote: remoteNotes.length, lastPullLocal: merged.length });
+      // 云端为空但本机有数据：不要静默“成功”，明确点出很可能是旧版 push 把云端清空了
+      var warn = (remoteNotes.length === 0 && localCount > 0)
+        ? '云端文件为空(0条)，已保留本机 ' + merged.length + ' 条；请在“有真实笔记的设备”点「⬆ 推送」恢复云端'
+        : null;
+      writeStatus({ lastSynced: Date.now(), lastError: warn, lastPullRemote: remoteNotes.length, lastPullLocal: merged.length });
       emitStatus();
       if (handlers.onAfterSync) try { handlers.onAfterSync(); } catch (e) {}
       return merged;
