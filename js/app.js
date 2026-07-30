@@ -1601,15 +1601,22 @@
       return;
     }
 
-    var saved = Store.save({
-      id: state.editId, type: type, title: title, body: body, tagsRaw: tagsRaw,
-      hwName: hwNameVal, hwModel: hwModelVal, hwVoltage: hwVoltageVal,
-      hwProtocol: hwProtocolVal, hwPins: hwPinsVal,
-      bugSymptom: bugSymptomVal, bugSteps: bugStepsVal, bugRootCause: bugRootCauseVal, bugSolved: bugSolvedVal,
-      projName: projNameVal, projMcu: projMcuVal, projPeripherals: projPeriphsVal,
-      projGithub: projGithubVal, projStatus: projStatusVal, projDesc: projDescVal,
-      goalId: editGoal ? editGoal.value : ''
-    });
+    var saved;
+    try {
+      saved = Store.save({
+        id: state.editId, type: type, title: title, body: body, tagsRaw: tagsRaw,
+        hwName: hwNameVal, hwModel: hwModelVal, hwVoltage: hwVoltageVal,
+        hwProtocol: hwProtocolVal, hwPins: hwPinsVal,
+        bugSymptom: bugSymptomVal, bugSteps: bugStepsVal, bugRootCause: bugRootCauseVal, bugSolved: bugSolvedVal,
+        projName: projNameVal, projMcu: projMcuVal, projPeripherals: projPeriphsVal,
+        projGithub: projGithubVal, projStatus: projStatusVal, projDesc: projDescVal,
+        goalId: editGoal ? editGoal.value : ''
+      });
+    } catch (e) {
+      console.error('保存笔记失败', e);
+      showSnack('保存失败：本地存储空间不足，请清理部分含大图的笔记或改用外链图片');
+      return; // 不关闭编辑页，保留用户已输入内容
+    }
     if (window.SkillRadar) window.SkillRadar.recomputeOnNoteChange(); // 笔记变更 → 重算未被手动校准的维度
     showSnack(state.editId ? '已更新' : '已保存');
     state.editId = null;
@@ -2842,17 +2849,24 @@
   function init() {
     bindEvents();
     if (window.CRC) applyCrcPreset(crcPreset.value); // 预填高级参数与默认预设一致
-    if (window.GitHubSync) {
-      window.GitHubSync.setHandlers({
-        onStatus: function () { if (syncStatus) refreshSyncStatus(); },
-        onError: function (msg) { showSnack(msg); },
-        onSyncStart: function () {},
-        onAfterSync: function () { if (typeof renderHome === 'function') renderHome(); }
-      });
-      // 启动拉取（静默：失败只记状态，不打扰）；拉取完成后刷新列表
-      window.GitHubSync.initPull(function () { renderHome(); });
-    }
-    navigate('home');
+    // 先载入本地存储（IndexedDB，可能从旧 localStorage 迁移），再渲染，避免读到空数据
+    var ready = (window.NoteStore && window.NoteStore.load) ? window.NoteStore.load() : Promise.resolve();
+    Promise.resolve(ready).then(function () {
+      if (window.GitHubSync) {
+        window.GitHubSync.setHandlers({
+          onStatus: function () { if (syncStatus) refreshSyncStatus(); },
+          onError: function (msg) { showSnack(msg); },
+          onSyncStart: function () {},
+          onAfterSync: function () { if (typeof renderHome === 'function') renderHome(); }
+        });
+        // 启动拉取（静默：失败只记状态，不打扰）；拉取完成后刷新列表
+        window.GitHubSync.initPull(function () { renderHome(); });
+      }
+      navigate('home');
+    }).catch(function (e) {
+      console.error('存储初始化失败', e);
+      navigate('home');
+    });
   }
 
   if (document.readyState === 'loading') {

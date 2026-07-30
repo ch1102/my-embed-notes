@@ -48,7 +48,18 @@
     return list;
   }
 
-  function read() {
+  // ---------- 持久化后端：优先 IndexedDB（大容量），回退 localStorage ----------
+  // 根因：正文内嵌 base64 图片导致数据量远超 localStorage 约 5MB 上限，
+  //       write() 触发 QuotaExceededError 使保存崩溃。IndexedDB 配额达数百 MB~GB 级。
+  // 设计：read() 始终返回内存缓存（同步，保持原 API 不变）；write() 同步更新缓存、
+  //      异步持久化到 IndexedDB；启动 load() 时载入缓存，并自动从旧 localStorage 迁移。
+  var IDB_NAME = 'learning_notes_web';
+  var IDB_STORE = 'notes';
+  var idbSupported = (typeof indexedDB !== 'undefined');
+  var dbPromise = null;
+  var cache = null; // 内存缓存；非 null 时 read() 直接返回（浅拷贝以保持独立快照）
+
+  function readLS() {
     try {
       var raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return [];
@@ -60,8 +71,81 @@
     }
   }
 
+  function getDB() {
+    if (!idbSupported) return Promise.reject(new Error('indexedDB 不可用'));
+    if (dbPromise) return dbPromise;
+    dbPromise = new Promise(function (resolve, reject) {
+      var req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = function (e) {
+        var db = e.target.result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) {
+          db.createObjectStore(IDB_STORE, { keyPath: 'id' });
+        }
+      };
+      req.onsuccess = function () { resolve(req.result); };
+      req.onerror = function () { reject(req.error); };
+    });
+    return dbPromise;
+  }
+
+  function persistIDB(list) {
+    if (!idbSupported) {
+      // 回退：写入 localStorage（超配额时静默失败，不阻塞 UI）
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(list)); }
+      catch (e) { console.warn('localStorage 写入失败（容量超限），已回退', e); }
+      return;
+    }
+    getDB().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(IDB_STORE, 'readwrite');
+        var os = tx.objectStore(IDB_STORE);
+        os.clear();
+        list.forEach(function (n) { if (n && n.id) os.put(n); });
+        tx.oncomplete = resolve;
+        tx.onerror = function () { reject(tx.error); };
+      });
+    }).catch(function (err) {
+      console.warn('IndexedDB 持久化失败，回退 localStorage', err);
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(list)); } catch (e2) { /* 忽略 */ }
+    });
+  }
+
+  /** 启动时从 IndexedDB 载入内存缓存；首次运行自动从旧 localStorage 迁移 */
+  function load() {
+    if (cache) return Promise.resolve(cache);
+    if (!idbSupported) { cache = readLS(); return Promise.resolve(cache); }
+    return getDB().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(IDB_STORE, 'readonly');
+        var req = tx.objectStore(IDB_STORE).getAll();
+        req.onsuccess = function () {
+          var arr = req.result || [];
+          if (arr.length === 0) {
+            var ls = readLS(); // 迁移旧数据
+            if (ls.length) { cache = ls; persistIDB(ls); resolve(cache); return; }
+          }
+          cache = arr;
+          resolve(cache);
+        };
+        req.onerror = function () { reject(req.error); };
+      });
+    }).catch(function (err) {
+      console.warn('IndexedDB 读取失败，回退 localStorage', err);
+      cache = readLS();
+      return cache;
+    });
+  }
+
+  /** 同步读取（依赖已载入的内存缓存；未载入时回退 localStorage） */
+  function read() {
+    if (cache) return cache.slice(); // 浅拷贝，保持每次读取为独立快照
+    return readLS();
+  }
+
+  /** 同步写入：立即更新内存缓存，异步持久化到 IndexedDB（回退 localStorage） */
   function write(list) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+    cache = list;
+    persistIDB(list);
   }
 
   function genId() {
@@ -336,6 +420,7 @@
     getAll: getAll,
     getById: getById,
     save: save,
+    load: load,
     remove: remove,
     replaceAll: replaceAll,
     searchByTitle: searchByTitle,
